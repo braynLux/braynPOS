@@ -26,8 +26,19 @@ export class InvoiceService {
       throw { statusCode: 403, message: 'Customer does not belong to this channel' }
     }
 
+    if (data.selectedBankId) {
+      const bank = await prisma.channelBank.findFirst({
+        where:  { id: data.selectedBankId, channelId: data.channelId, isActive: true },
+        select: { id: true },
+      })
+      if (!bank) {
+        throw { statusCode: 400, message: 'Selected bank account does not belong to this channel' }
+      }
+    }
+
+    const lineDiscountTotal = data.lines.reduce((s, l) => s + (l.discountAmount ?? 0), 0)
     const subtotal = data.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0)
-    const totalAmount = Math.max(0, subtotal - data.discountAmount + data.taxAmount)
+    const totalAmount = Math.max(0, subtotal - lineDiscountTotal - data.discountAmount + (data.taxExempt ? 0 : data.taxAmount))
 
     return prisma.invoice.create({
       data: {
@@ -37,24 +48,30 @@ export class InvoiceService {
         channelId:       data.channelId,
         customerId:      data.customerId,
         subtotal,
-        discountAmount:  data.discountAmount,
-        taxAmount:       data.taxAmount,
+        discountAmount:  data.discountAmount + lineDiscountTotal,
+        taxAmount:       data.taxExempt ? 0 : data.taxAmount,
         totalAmount,
         dueDate:         data.dueDate ? new Date(data.dueDate) : null,
         notes:           data.notes,
+        customerOrderNo: data.customerOrderNo,
+        quotationRefNo:  data.quotationRefNo,
+        taxExempt:       data.taxExempt,
+        terms:           data.terms,
+        selectedBankId:  data.selectedBankId,
         createdBy:       data.createdBy,
         convertedFromId: data.convertedFromId,
         lines: {
           create: data.lines.map(l => ({
-            itemId:      l.itemId,
-            description: l.description,
-            quantity:    l.quantity,
-            unitPrice:   l.unitPrice,
-            lineTotal:   l.quantity * l.unitPrice,
+            itemId:         l.itemId,
+            description:    l.description,
+            quantity:       l.quantity,
+            unitPrice:      l.unitPrice,
+            discountAmount: l.discountAmount ?? 0,
+            lineTotal:      l.quantity * l.unitPrice - (l.discountAmount ?? 0),
           })),
         },
       },
-      include: { lines: true, customer: { select: { id: true, name: true } } },
+      include: { lines: true, customer: { select: { id: true, name: true } }, bank: true },
     })
   }
 
@@ -108,6 +125,7 @@ export class InvoiceService {
         lines:         { include: { item: { select: { id: true, name: true, sku: true } } } },
         convertedFrom: { select: { id: true, invoiceNo: true, type: true } },
         convertedTo:   { select: { id: true, invoiceNo: true, type: true } },
+        bank:          true,
       },
     })
   }
@@ -131,14 +149,20 @@ export class InvoiceService {
       channelId:       source.channelId,
       customerId:      source.customerId,
       lines: source.lines.map(l => ({
-        itemId:      l.itemId ?? undefined,
-        description: l.description,
-        quantity:    Number(l.quantity),
-        unitPrice:   Number(l.unitPrice),
+        itemId:         l.itemId ?? undefined,
+        description:    l.description,
+        quantity:       Number(l.quantity),
+        unitPrice:      Number(l.unitPrice),
+        discountAmount: 0,
       })),
       discountAmount:  Number(source.discountAmount),
       taxAmount:       Number(source.taxAmount),
       notes:           source.notes ?? undefined,
+      customerOrderNo: source.customerOrderNo ?? undefined,
+      quotationRefNo:  source.quotationRefNo ?? undefined,
+      taxExempt:       source.taxExempt,
+      terms:           source.terms ?? undefined,
+      selectedBankId:  source.selectedBankId ?? undefined,
       createdBy,
       convertedFromId: source.id,
     })

@@ -9,6 +9,7 @@ export const createItemSchema = z.object({
   brandId: z.string().optional().nullable(),
   supplierId: z.string().optional().nullable(),
   unitOfMeasure: z.string().default('PCS'),
+  packSize: z.number().int().min(1).optional(),
   retailPrice: z.number().min(0),
   wholesalePrice: z.number().min(0).optional(),
   minRetailPrice: z.number().min(0).optional(),

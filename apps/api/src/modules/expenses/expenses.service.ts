@@ -5,26 +5,28 @@ import { eventBus }                   from '../../lib/event-bus.js'
 
 export class ExpensesService {
   async create(data: {
-    channelId:   string
-    description: string
-    amount:      number
-    category?:   string
-    receiptRef?: string
-    notes?:      string
-    createdBy:   string
+    channelId:      string
+    description:    string
+    amount:         number
+    category?:      string
+    receiptRef?:    string
+    notes?:         string
+    paymentSource?: 'CASH' | 'BANK' | 'CREDITOR' | 'CAPITAL'
+    createdBy:      string
   }) {
     return prisma.$transaction(async (tx) => {
       const strictAmount = Math.round(data.amount * 100) / 100;
 
       const expense = await tx.expense.create({
         data: {
-          channelId:   data.channelId,
-          description: data.description,
-          amount:      strictAmount,
-          category:    data.category   ?? null,
-          receiptRef:  data.receiptRef ?? null,
-          notes:       data.notes      ?? null,
-          createdBy:   data.createdBy,
+          channelId:     data.channelId,
+          description:   data.description,
+          amount:        strictAmount,
+          category:      data.category   ?? null,
+          receiptRef:    data.receiptRef ?? null,
+          notes:         data.notes      ?? null,
+          paymentSource: data.paymentSource ?? 'CASH',
+          createdBy:     data.createdBy,
         },
       })
 

@@ -7,16 +7,18 @@ import { api } from '@/lib/api-client'
 import { useAuthStore } from '@/stores/auth.store'
 
 interface InvoiceLine {
-  id: string; description: string; quantity: unknown; unitPrice: unknown; lineTotal: unknown
+  id: string; description: string; quantity: unknown; unitPrice: unknown; discountAmount: unknown; lineTotal: unknown
   item?: { id: string; name: string; sku: string }
 }
 interface InvoiceDetail {
   id: string; invoiceNo: string; type: string; status: string
   subtotal: unknown; discountAmount: unknown; taxAmount: unknown; totalAmount: unknown; amountPaid: unknown
   dueDate?: string; notes?: string; createdAt: string
+  customerOrderNo?: string; quotationRefNo?: string; taxExempt: boolean; terms?: string
   customer: { id: string; name: string; phone?: string; email?: string }
   channel: { id: string; name: string }
   creator: { id: string; username: string }
+  bank?: { bankName: string; accountName: string; accountNumber: string; paybill?: string }
   lines: InvoiceLine[]
   convertedFrom?: { id: string; invoiceNo: string; type: string }
   convertedTo?: { id: string; invoiceNo: string; type: string }
@@ -127,17 +129,26 @@ export default function InvoiceDetailPage() {
             <div style={{ fontSize: '0.85rem' }}>Issued: {new Date(invoice.createdAt).toLocaleDateString()}</div>
             {invoice.dueDate && <div style={{ fontSize: '0.85rem' }}>Due: {new Date(invoice.dueDate).toLocaleDateString()}</div>}
             <div style={{ fontSize: '0.85rem' }}>By: {invoice.creator.username}</div>
+            {invoice.customerOrderNo && <div style={{ fontSize: '0.85rem' }}>Customer Order No: {invoice.customerOrderNo}</div>}
+            {invoice.quotationRefNo && <div style={{ fontSize: '0.85rem' }}>Quotation Ref: {invoice.quotationRefNo}</div>}
+            {invoice.taxExempt && <div style={{ fontSize: '0.85rem', color: 'var(--warning)' }}>Tax Exempt</div>}
+            {invoice.bank && (
+              <div style={{ fontSize: '0.85rem' }}>
+                Pay to: {invoice.bank.bankName} — {invoice.bank.accountNumber} ({invoice.bank.accountName})
+              </div>
+            )}
           </div>
         </div>
 
         <table className="table">
-          <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead>
+          <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Discount</th><th>Line Total</th></tr></thead>
           <tbody>
             {invoice.lines.map(l => (
               <tr key={l.id}>
                 <td>{l.description}{l.item && <code style={{ marginLeft: 8, fontSize: '0.75rem', color: 'var(--text-muted)' }}>{l.item.sku}</code>}</td>
                 <td>{Number(l.quantity)}</td>
                 <td>{fmt(l.unitPrice)}</td>
+                <td>{Number(l.discountAmount) > 0 ? `-${fmt(l.discountAmount)}` : '—'}</td>
                 <td style={{ fontWeight: 600 }}>{fmt(l.lineTotal)}</td>
               </tr>
             ))}
@@ -169,6 +180,12 @@ export default function InvoiceDetailPage() {
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Notes</div>
             <p style={{ fontSize: '0.9rem' }}>{invoice.notes}</p>
+          </div>
+        )}
+        {invoice.terms && (
+          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Terms &amp; Conditions</div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{invoice.terms}</p>
           </div>
         )}
       </div>

@@ -12,6 +12,8 @@ export class PurchaseService {
     landedCosts?: Array<{ description: string; amount: number; allocationMethod: 'BY_VALUE' | 'BY_QUANTITY' }>
     paymentMethod?: string
     notes?: string
+    supplierInvoiceNo?: string
+    purchaseDate?: string
     committedBy: string
   }) {
     // FIX 1: UUID suffix prevents collisions under concurrent load
@@ -95,6 +97,8 @@ export class PurchaseService {
           landedCostTotal,
           paymentMethod: data.paymentMethod as Prisma.EnumPaymentMethodFieldUpdateOperationsInput['set'] ?? null,
           notes: data.notes ?? null,
+          supplierInvoiceNo: data.supplierInvoiceNo ?? null,
+          purchaseDate: data.purchaseDate ? new Date(data.purchaseDate) : null,
           committedBy: data.committedBy,
           committedAt: new Date(),
           lines: {
