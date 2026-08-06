@@ -8,15 +8,16 @@ import { useAuthStore } from '@/stores/auth.store'
 interface Item { id: string; name: string; sku: string; retailPrice: number }
 interface Customer { id: string; name: string; phone?: string }
 interface Channel { id: string; name: string }
+interface Bank { id: string; bankName: string; accountName: string; accountNumber: string }
 interface Line {
   key: string; itemId?: string; description: string
-  quantity: number; unitPrice: number
+  quantity: number; unitPrice: number; discountAmount: number
   search: string; results: Item[]
 }
 
 const newLine = (): Line => ({
   key: Math.random().toString(36).slice(2),
-  description: '', quantity: 1, unitPrice: 0, search: '', results: [],
+  description: '', quantity: 1, unitPrice: 0, discountAmount: 0, search: '', results: [],
 })
 
 export default function NewInvoicePage() {
@@ -36,8 +37,14 @@ export default function NewInvoicePage() {
   const [lines, setLines] = useState<Line[]>([newLine()])
   const [discountAmount, setDiscountAmount] = useState(0)
   const [taxAmount, setTaxAmount] = useState(0)
+  const [taxExempt, setTaxExempt] = useState(false)
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
+  const [customerOrderNo, setCustomerOrderNo] = useState('')
+  const [quotationRefNo, setQuotationRefNo] = useState('')
+  const [terms, setTerms] = useState('')
+  const [banks, setBanks] = useState<Bank[]>([])
+  const [selectedBankId, setSelectedBankId] = useState('')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -48,6 +55,12 @@ export default function NewInvoicePage() {
       setChannelId(user.channelId)
     }
   }, [token, canChooseChannel, user?.channelId])
+
+  useEffect(() => {
+    if (!token || !channelId) { setBanks([]); return }
+    api.get<Bank[]>(`/accounting/bank-deposits/banks?channelId=${channelId}`, token)
+      .then(setBanks).catch(() => setBanks([]))
+  }, [token, channelId])
 
   useEffect(() => {
     if (!token || customerSearch.length < 2) { setCustomerResults([]); return }
@@ -83,7 +96,8 @@ export default function NewInvoicePage() {
   }
 
   const subtotal = lines.reduce((s, l) => s + (l.quantity * l.unitPrice), 0)
-  const total = Math.max(0, subtotal - discountAmount + taxAmount)
+  const lineDiscountTotal = lines.reduce((s, l) => s + (l.discountAmount || 0), 0)
+  const total = Math.max(0, subtotal - lineDiscountTotal - discountAmount + (taxExempt ? 0 : taxAmount))
   const fmt = (n: number) => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(n)
 
   const handleSubmit = async () => {
@@ -100,11 +114,15 @@ export default function NewInvoicePage() {
         customerId: customer.id,
         lines: validLines.map(l => ({
           itemId: l.itemId, description: l.description,
-          quantity: l.quantity, unitPrice: l.unitPrice,
+          quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: l.discountAmount || 0,
         })),
-        discountAmount, taxAmount,
+        discountAmount, taxAmount, taxExempt,
         dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
         notes: notes || undefined,
+        customerOrderNo: customerOrderNo || undefined,
+        quotationRefNo: quotationRefNo || undefined,
+        terms: terms || undefined,
+        selectedBankId: selectedBankId || undefined,
       }, token!)
       toast.success(`${docType === 'QUOTATION' ? 'Quotation' : docType === 'PROFORMA' ? 'Proforma' : 'Invoice'} ${invoice.invoiceNo} created`)
       router.push(`/dashboard/invoicing/${invoice.id}`)
@@ -174,19 +192,45 @@ export default function NewInvoicePage() {
           </div>
         </div>
 
-        {docType === 'INVOICE' && (
-          <div className="form-group" style={{ maxWidth: 240, marginBottom: 14 }}>
-            <label>Due Date</label>
-            <input type="date" className="input" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 14 }}>
+          <div className="form-group">
+            <label>Customer Order No.</label>
+            <input className="input" value={customerOrderNo} onChange={e => setCustomerOrderNo(e.target.value)} placeholder="Customer's PO number..." />
           </div>
-        )}
+          {docType !== 'INVOICE' && (
+            <div className="form-group">
+              <label>Quotation Ref No.</label>
+              <input className="input" value={quotationRefNo} onChange={e => setQuotationRefNo(e.target.value)} placeholder="Internal reference..." />
+            </div>
+          )}
+          {docType === 'INVOICE' && (
+            <div className="form-group">
+              <label>Due Date</label>
+              <input type="date" className="input" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+            </div>
+          )}
+          {banks.length > 0 && (
+            <div className="form-group">
+              <label>Payment To Bank Account</label>
+              <select className="input" value={selectedBankId} onChange={e => setSelectedBankId(e.target.value)}>
+                <option value="">Not specified</option>
+                {banks.map(b => <option key={b.id} value={b.id}>{b.bankName} — {b.accountNumber}</option>)}
+              </select>
+            </div>
+          )}
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.9rem' }}>
+          <input type="checkbox" checked={taxExempt} onChange={e => setTaxExempt(e.target.checked)} />
+          Tax exempt
+        </label>
       </div>
 
       <div className="card" style={{ padding: 24, marginBottom: 16 }}>
         <h3 style={{ marginBottom: 16 }}>Line Items</h3>
         <table className="table">
           <thead>
-            <tr><th>Item / Description</th><th style={{ width: 90 }}>Qty</th><th style={{ width: 130 }}>Unit Price</th><th style={{ width: 120 }}>Total</th><th style={{ width: 40 }}></th></tr>
+            <tr><th>Item / Description</th><th style={{ width: 90 }}>Qty</th><th style={{ width: 130 }}>Unit Price</th><th style={{ width: 110 }}>Discount</th><th style={{ width: 120 }}>Total</th><th style={{ width: 40 }}></th></tr>
           </thead>
           <tbody>
             {lines.map(line => (
@@ -220,7 +264,11 @@ export default function NewInvoicePage() {
                   <input type="number" min={0} step={0.01} className="input" value={line.unitPrice}
                     onChange={e => updateLine(line.key, { unitPrice: Number(e.target.value) })} />
                 </td>
-                <td style={{ fontWeight: 600 }}>{fmt(line.quantity * line.unitPrice)}</td>
+                <td>
+                  <input type="number" min={0} step={0.01} className="input" value={line.discountAmount}
+                    onChange={e => updateLine(line.key, { discountAmount: Number(e.target.value) })} />
+                </td>
+                <td style={{ fontWeight: 600 }}>{fmt(line.quantity * line.unitPrice - line.discountAmount)}</td>
                 <td>
                   <button className="btn-link" onClick={() => removeLine(line.key)} title="Remove line">✕</button>
                 </td>
@@ -235,14 +283,19 @@ export default function NewInvoicePage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
               <span>Subtotal</span><span>{fmt(subtotal)}</span>
             </div>
+            {lineDiscountTotal > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, color: 'var(--text-muted)' }}>
+                <span>Line Discounts</span><span>-{fmt(lineDiscountTotal)}</span>
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8 }}>
-              <label style={{ margin: 0 }}>Discount</label>
+              <label style={{ margin: 0 }}>Additional Discount</label>
               <input type="number" min={0} step={0.01} className="input" style={{ width: 130, textAlign: 'right' }}
                 value={discountAmount} onChange={e => setDiscountAmount(Number(e.target.value))} />
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8 }}>
-              <label style={{ margin: 0 }}>Tax</label>
-              <input type="number" min={0} step={0.01} className="input" style={{ width: 130, textAlign: 'right' }}
+              <label style={{ margin: 0 }}>Tax {taxExempt && '(exempt)'}</label>
+              <input type="number" min={0} step={0.01} className="input" disabled={taxExempt} style={{ width: 130, textAlign: 'right' }}
                 value={taxAmount} onChange={e => setTaxAmount(Number(e.target.value))} />
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '1.1rem', paddingTop: 8, borderTop: '1px solid var(--border)' }}>
@@ -253,9 +306,13 @@ export default function NewInvoicePage() {
       </div>
 
       <div className="card" style={{ padding: 24, marginBottom: 16 }}>
-        <div className="form-group">
+        <div className="form-group" style={{ marginBottom: 14 }}>
           <label>Notes</label>
           <textarea className="input" rows={3} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes for this document..." />
+        </div>
+        <div className="form-group">
+          <label>Terms &amp; Conditions</label>
+          <textarea className="input" rows={3} value={terms} onChange={e => setTerms(e.target.value)} placeholder="e.g. Payment due within 30 days. Goods remain property of seller until paid in full." />
         </div>
       </div>
 

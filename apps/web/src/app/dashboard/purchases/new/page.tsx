@@ -35,6 +35,7 @@ export default function NewPurchasePage() {
   const [supplierId, setSupplierId] = useState('')
   const [lpoId, setLpoId] = useState(preFilledLpoId || '')
   const [notes, setNotes] = useState('')
+  const [supplierInvoiceNo, setSupplierInvoiceNo] = useState('')
   const [lines, setLines] = useState<{ id: string; itemId: string; quantity: number; unitCost: number; retailPrice: number; wholesalePrice: number; search: string; items: Item[]; serialNumbers?: string; isSerialized?: boolean }[]>([])
   const canChooseChannel = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
 
@@ -182,7 +183,8 @@ export default function NewPurchasePage() {
           wholesalePrice: Number(l.wholesalePrice) || undefined,
           serialNumbers: l.isSerialized ? l.serialNumbers?.split('\n').map(s => s.trim()).filter(Boolean) : undefined
         })),
-        notes: notes || undefined
+        notes: notes || undefined,
+        supplierInvoiceNo: supplierInvoiceNo || undefined,
       }, token!)
 
       toast.success('Purchase committed successfully!')
@@ -349,14 +351,24 @@ export default function NewPurchasePage() {
           </div>
         </div>
 
+        <div className="form-group" style={{ marginBottom: 16, maxWidth: 320 }}>
+          <label>Supplier Invoice No.</label>
+          <input
+            className="input"
+            value={supplierInvoiceNo}
+            onChange={e => setSupplierInvoiceNo(e.target.value)}
+            placeholder="Supplier's own invoice/document number"
+          />
+        </div>
+
         <div className="form-group" style={{ marginBottom: 24 }}>
           <label>Internal Notes</label>
-          <textarea 
-            className="input" 
-            rows={3} 
-            value={notes} 
-            onChange={e => setNotes(e.target.value)} 
-            placeholder="Delivery note numbers, remarks, etc." 
+          <textarea
+            className="input"
+            rows={3}
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="Delivery note numbers, remarks, etc."
           />
         </div>
 

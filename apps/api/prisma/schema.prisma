@@ -63,6 +63,8 @@ model Channel {
   costAudits          CostAudit[]
   syncConflicts       SyncConflict[]
   invoices            Invoice[]
+  jobLevels           JobLevel[]
+  expenseCategories   ExpenseCategory[]
   kraPin              String?
 
   @@map("channels")
@@ -246,6 +248,7 @@ model Item {
   brandId           String?
   supplierId        String?
   unitOfMeasure     String             @default("PCS")
+  packSize          Int                @default(1)
   retailPrice       Decimal            @db.Decimal(12, 4)
   wholesalePrice    Decimal            @db.Decimal(12, 4)
   minRetailPrice    Decimal            @db.Decimal(12, 4)
@@ -416,6 +419,8 @@ model Customer {
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   kraPin               String?
+  contactPerson        String?
+  isThirdParty         Boolean              @default(false)
   successfulRepayments Int                  @default(0)
   customerPayments     CustomerPayment[]
   loyaltyTransactions  LoyaltyTransaction[]
@@ -476,6 +481,11 @@ model Invoice {
   amountPaid      Decimal       @default(0) @db.Decimal(14, 4)
   dueDate         DateTime?
   notes           String?
+  customerOrderNo String?
+  quotationRefNo  String?
+  taxExempt       Boolean       @default(false)
+  terms           String?
+  selectedBankId  String?
   convertedFromId String?       @unique
   createdBy       String
   createdAt       DateTime      @default(now())
@@ -484,6 +494,7 @@ model Invoice {
   channel         Channel       @relation(fields: [channelId], references: [id])
   customer        Customer      @relation(fields: [customerId], references: [id])
   creator         User          @relation(fields: [createdBy], references: [id])
+  bank            ChannelBank?  @relation(fields: [selectedBankId], references: [id])
   convertedFrom   Invoice?      @relation("InvoiceConversion", fields: [convertedFromId], references: [id])
   convertedTo     Invoice?      @relation("InvoiceConversion")
   lines           InvoiceLine[]
@@ -496,15 +507,16 @@ model Invoice {
 }
 
 model InvoiceLine {
-  id          String  @id @default(uuid())
-  invoiceId   String
-  itemId      String?
-  description String
-  quantity    Decimal @db.Decimal(12, 4)
-  unitPrice   Decimal @db.Decimal(12, 4)
-  lineTotal   Decimal @db.Decimal(14, 4)
-  invoice     Invoice @relation(fields: [invoiceId], references: [id])
-  item        Item?   @relation(fields: [itemId], references: [id])
+  id             String  @id @default(uuid())
+  invoiceId      String
+  itemId         String?
+  description    String
+  quantity       Decimal @db.Decimal(12, 4)
+  unitPrice      Decimal @db.Decimal(12, 4)
+  discountAmount Decimal @default(0) @db.Decimal(14, 4)
+  lineTotal      Decimal @db.Decimal(14, 4)
+  invoice        Invoice @relation(fields: [invoiceId], references: [id])
+  item           Item?   @relation(fields: [itemId], references: [id])
 
   @@index([invoiceId])
   @@map("invoice_lines")
@@ -569,26 +581,28 @@ model LpoLine {
 }
 
 model Purchase {
-  id              String         @id @default(uuid())
-  purchaseNo      String         @unique
-  supplierId      String
-  channelId       String
-  purchaseOrderId String?
-  status          PurchaseStatus @default(DRAFT)
-  totalCost       Decimal        @default(0) @db.Decimal(14, 4)
-  landedCostTotal Decimal        @default(0) @db.Decimal(14, 4)
-  paymentMethod   PaymentMethod?
-  notes           String?
-  committedBy     String?
-  committedAt     DateTime?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  deletedAt       DateTime?
-  landedCosts     LandedCost[]
-  lines           PurchaseLine[]
-  channel         Channel        @relation(fields: [channelId], references: [id])
-  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
-  supplier        Supplier       @relation(fields: [supplierId], references: [id])
+  id                String         @id @default(uuid())
+  purchaseNo        String         @unique
+  supplierId        String
+  channelId         String
+  purchaseOrderId   String?
+  supplierInvoiceNo String?
+  purchaseDate      DateTime?
+  status            PurchaseStatus @default(DRAFT)
+  totalCost         Decimal        @default(0) @db.Decimal(14, 4)
+  landedCostTotal   Decimal        @default(0) @db.Decimal(14, 4)
+  paymentMethod     PaymentMethod?
+  notes             String?
+  committedBy       String?
+  committedAt       DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  deletedAt         DateTime?
+  landedCosts       LandedCost[]
+  lines             PurchaseLine[]
+  channel           Channel        @relation(fields: [channelId], references: [id])
+  purchaseOrder     PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  supplier          Supplier       @relation(fields: [supplierId], references: [id])
 
   @@index([supplierId])
   @@index([channelId])
@@ -660,21 +674,35 @@ model TransferLine {
 }
 
 model Expense {
-  id          String    @id @default(uuid())
-  channelId   String
-  description String
-  amount      Decimal   @db.Decimal(14, 4)
-  category    String?
-  receiptRef  String?
-  notes       String?
-  createdBy   String
-  createdAt   DateTime  @default(now())
-  deletedAt   DateTime?
-  channel     Channel   @relation(fields: [channelId], references: [id])
+  id            String               @id @default(uuid())
+  channelId     String
+  description   String
+  amount        Decimal              @db.Decimal(14, 4)
+  category      String?
+  receiptRef    String?
+  notes         String?
+  paymentSource ExpensePaymentSource @default(CASH)
+  createdBy     String
+  createdAt     DateTime             @default(now())
+  deletedAt     DateTime?
+  channel       Channel              @relation(fields: [channelId], references: [id])
 
   @@index([channelId])
   @@index([createdAt])
   @@map("expenses")
+}
+
+model ExpenseCategory {
+  id        String   @id @default(uuid())
+  name      String
+  channelId String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  channel   Channel? @relation(fields: [channelId], references: [id])
+
+  @@unique([channelId, name])
+  @@index([channelId])
+  @@map("expense_categories")
 }
 
 model BankDeposit {
@@ -706,8 +734,24 @@ model StaffProfile {
   updatedAt      DateTime        @updatedAt
   salaryRunLines SalaryRunLine[]
   user           User            @relation(fields: [userId], references: [id])
+  jobLevel       JobLevel?       @relation(fields: [jobLevelId], references: [id])
 
   @@map("staff_profiles")
+}
+
+model JobLevel {
+  id                  String         @id @default(uuid())
+  name                String
+  basicSalary         Decimal        @default(0) @db.Decimal(12, 2)
+  overtimeRatePerHour Decimal        @default(0) @db.Decimal(10, 2)
+  channelId           String?
+  isActive            Boolean        @default(true)
+  createdAt           DateTime       @default(now())
+  channel             Channel?       @relation(fields: [channelId], references: [id])
+  staffProfiles       StaffProfile[]
+
+  @@index([channelId])
+  @@map("job_levels")
 }
 
 model DeductionRule {
@@ -1162,6 +1206,13 @@ enum JournalRefType {
   ADJUSTMENT
 }
 
+enum ExpensePaymentSource {
+  CASH
+  BANK
+  CREDITOR
+  CAPITAL
+}
+
 enum PaymentMethod {
   CASH
   MOBILE_MONEY
@@ -1406,15 +1457,16 @@ model SerialAudit {
 }
 
 model ChannelBank {
-  id            String  @id @default(uuid())
+  id            String    @id @default(uuid())
   channelId     String
   bankName      String
   accountName   String
   accountNumber String
   paybill       String?
   branch        String?
-  isActive      Boolean @default(true)
-  channel       Channel @relation(fields: [channelId], references: [id])
+  isActive      Boolean   @default(true)
+  channel       Channel   @relation(fields: [channelId], references: [id])
+  invoices      Invoice[]
 
   @@map("channel_banks")
 }

@@ -16,10 +16,12 @@ interface Customer {
   loyaltyPoints: number
   createdAt: string
   channelId?: string
+  contactPerson?: string
+  isThirdParty?: boolean
 }
 interface Channel { id: string; name: string }
 
-const EMPTY_CUSTOMER = { name: '', phone: '', email: '', tier: 'BRONZE', creditLimit: 1000 }
+const EMPTY_CUSTOMER = { name: '', phone: '', email: '', tier: 'BRONZE', creditLimit: 1000, contactPerson: '', isThirdParty: false }
 
 export default function CustomersPage() {
   const token = useAuthStore((s) => s.accessToken)
@@ -221,6 +223,18 @@ export default function CustomersPage() {
                 <div className="form-group" style={{ flex: 1 }}>
                   <label>Credit Limit (KES)</label>
                   <input type="number" className="input" value={current.creditLimit ?? 0} onChange={e => setCurrent({ ...current, creditLimit: Number(e.target.value) })} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label>Contact Person</label>
+                  <input className="input" value={current.contactPerson || ''} onChange={e => setCurrent({ ...current, contactPerson: e.target.value })} placeholder="For business accounts" />
+                </div>
+                <div className="form-group" style={{ flex: 1, display: 'flex', alignItems: 'flex-end', paddingBottom: 10 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
+                    <input type="checkbox" checked={current.isThirdParty || false} onChange={e => setCurrent({ ...current, isThirdParty: e.target.checked })} />
+                    Third-party / reseller
+                  </label>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>

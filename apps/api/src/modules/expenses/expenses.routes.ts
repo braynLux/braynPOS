@@ -65,9 +65,10 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
       channelId:   z.string().uuid(),
       description: z.string().min(1).max(200),
       amount:      z.coerce.number().positive(),
-      category:    z.string().optional(),
-      receiptRef:  z.string().optional(),
-      notes:       z.string().max(500).optional(),
+      category:      z.string().optional(),
+      receiptRef:    z.string().optional(),
+      notes:         z.string().max(500).optional(),
+      paymentSource: z.enum(['CASH', 'BANK', 'CREDITOR', 'CAPITAL']).optional(),
     }).parse(request.body)
 
     if (!HQ_EXPENSE_ROLES.includes(request.user.role)) {
@@ -128,5 +129,37 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
     // FIX 1: Correct param order — was passing request.user.sub as channelId.
     // service.softDelete(id, channelId, deletedBy)
     return expensesService.softDelete(id, channelId, request.user.sub)
+  })
+
+  // GET /expenses/categories — shared, team-wide category list
+  app.get('/categories', {
+    config:     RATE.READ,
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+  }, async (request) => {
+    const isHQ = HQ_EXPENSE_ROLES.includes(request.user.role)
+    return prisma.expenseCategory.findMany({
+      where:   { isActive: true, ...(!isHQ && { channelId: request.user.channelId ?? null }) },
+      orderBy: { name: 'asc' },
+    })
+  })
+
+  // POST /expenses/categories
+  app.post('/categories', {
+    config:     RATE.APPROVAL,
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+  }, async (request, reply) => {
+    const { name } = z.object({ name: z.string().min(1).max(100) }).parse(request.body)
+    const isHQ = HQ_EXPENSE_ROLES.includes(request.user.role)
+
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+
+    const channelId = isHQ ? null : request.user.channelId
+    const existing = await prisma.expenseCategory.findFirst({ where: { channelId, name } })
+    const category = existing
+      ? await prisma.expenseCategory.update({ where: { id: existing.id }, data: { isActive: true } })
+      : await prisma.expenseCategory.create({ data: { name, channelId } })
+    reply.status(201).send(category)
   })
 }

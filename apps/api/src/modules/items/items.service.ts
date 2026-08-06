@@ -240,7 +240,7 @@ export class ItemsService {
     }
 
     const { channelId, ...itemData } = data
-    const itemFields    = ['sku', 'barcode', 'name', 'description', 'categoryId', 'brandId', 'supplierId', 'unitOfMeasure', 'reorderLevel', 'isSerialized', 'taxClass', 'imageUrl', 'isActive']
+    const itemFields    = ['sku', 'barcode', 'name', 'description', 'categoryId', 'brandId', 'supplierId', 'unitOfMeasure', 'packSize', 'reorderLevel', 'isSerialized', 'taxClass', 'imageUrl', 'isActive']
     const balanceFields = ['retailPrice', 'wholesalePrice', 'minRetailPrice', 'minWholesalePrice', 'weightedAvgCost']
 
     const updateData: any  = {}

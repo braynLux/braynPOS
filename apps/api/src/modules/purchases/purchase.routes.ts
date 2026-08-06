@@ -71,6 +71,8 @@ export const purchaseRoutes: FastifyPluginAsync = async (app) => {
       })).optional(),
       paymentMethod: z.enum(['CASH', 'MOBILE_MONEY', 'CARD', 'BANK_TRANSFER', 'CREDIT']).optional(),
       notes:         z.string().optional(),
+      supplierInvoiceNo: z.string().max(100).optional(),
+      purchaseDate:      z.string().datetime().optional(),
     }).parse(request.body)
 
     if (!HQ_PURCHASE_ROLES.includes(request.user.role)) {

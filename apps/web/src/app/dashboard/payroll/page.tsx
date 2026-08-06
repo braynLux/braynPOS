@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { toast } from 'react-hot-toast'
 import { api } from '@/lib/api-client'
 import { useAuthStore } from '@/stores/auth.store'
@@ -218,6 +219,7 @@ export default function PayrollPage() {
              }
              getData={getExportData}
           />
+          <Link href="/dashboard/payroll/rules" className="btn btn-ghost">⚙️ Payroll Rules</Link>
           <button className="btn btn-primary" onClick={() => setShowNewRun(true)}>+ New Salary Run</button>
         </div>
       </div>

@@ -1,6 +1,8 @@
 import { prisma } from '../../lib/prisma.js'
 
 const RETURN_REFERENCE_TYPE = 'sale_return'
+const NON_ADMIN_RETURN_WINDOW_MS = 3 * 60 * 60 * 1000
+const HQ_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export async function findReturns(query: {
   channelId?: string; startDate?: string; endDate?: string
@@ -54,6 +56,7 @@ export async function processReturn(
   saleId: string,
   lines: Array<{ saleItemId: string; quantity: number; reason?: string }>,
   actorId: string,
+  actorRole: string,
   channelId?: string,
 ) {
   return prisma.$transaction(async (tx) => {
@@ -63,6 +66,13 @@ export async function processReturn(
     })
     if (sale.deletedAt) {
       throw { statusCode: 400, message: 'Cannot return items from a voided sale' }
+    }
+
+    if (!HQ_ROLES.includes(actorRole)) {
+      const elapsed = Date.now() - new Date(sale.createdAt).getTime()
+      if (elapsed > NON_ADMIN_RETURN_WINDOW_MS) {
+        throw { statusCode: 403, message: 'Only an admin can return items sold more than 3 hours ago' }
+      }
     }
 
     // Already-returned quantity per saleItem, derived from prior RETURN movements

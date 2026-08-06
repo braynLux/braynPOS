@@ -217,4 +217,39 @@ export const payrollRoutes: FastifyPluginAsync = async (app) => {
     })
     return { message: 'Allowance rule deactivated' }
   })
+
+  // GET /payroll/rules/job-levels
+  app.get('/rules/job-levels', async (request) => {
+    return prisma.jobLevel.findMany({
+      where:   { channelId: request.user.channelId ?? null, isActive: true },
+      orderBy: { basicSalary: 'desc' },
+    })
+  })
+
+  // POST /payroll/rules/job-levels
+  app.post('/rules/job-levels', async (request, reply) => {
+    const body = z.object({
+      name:                z.string().min(1),
+      basicSalary:         z.number().min(0),
+      overtimeRatePerHour: z.number().min(0).default(0),
+    }).parse(request.body)
+
+    const result = await prisma.jobLevel.create({
+      data: {
+        ...body,
+        channelId: request.user.channelId ?? null,
+      },
+    })
+    reply.status(201).send(result)
+  })
+
+  // DELETE /payroll/rules/job-levels/:id
+  app.delete('/rules/job-levels/:id', async (request) => {
+    const { id } = request.params as { id: string }
+    await prisma.jobLevel.update({
+      where: { id },
+      data:  { isActive: false },
+    })
+    return { message: 'Job level deactivated' }
+  })
 }

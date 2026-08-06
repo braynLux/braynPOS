@@ -4,7 +4,7 @@ import { api } from '@/lib/api-client'
 import { useAuthStore } from '@/stores/auth.store'
 import { ExportMenu } from '@/components/shared/ExportMenu'
 
-interface Expense { id: string; description: string; amount: unknown; category: string; receiptRef?: string; createdAt: string; channel?: { name: string }; recordedBy?: { username: string } }
+interface Expense { id: string; description: string; amount: unknown; category: string; receiptRef?: string; paymentSource?: string; createdAt: string; channel?: { name: string }; recordedBy?: { username: string } }
 interface Channel { id: string; name: string }
 
 const DEFAULT_CATEGORIES = ['Rent', 'Utilities', 'Salaries', 'Transport', 'Supplies', 'Marketing', 'Maintenance', 'Insurance', 'Meals', 'Bank Charges', 'Repairs', 'Equipment', 'Other']
@@ -24,13 +24,20 @@ export default function ExpensesPage() {
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0])
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0])
 
-  const [form, setForm] = useState({ channelId: '', description: '', amount: 0, category: '', receiptRef: '', notes: '' })
-  const [customCategories, setCustomCategories] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('expenseCategories') || '[]') } catch { return [] }
-  })
+  const [form, setForm] = useState({ channelId: '', description: '', amount: 0, category: '', receiptRef: '', notes: '', paymentSource: 'CASH' })
+  const [customCategories, setCustomCategories] = useState<string[]>([])
   const [showNewCat, setShowNewCat] = useState(false)
   const [newCatName, setNewCatName] = useState('')
+  const [savingCat, setSavingCat] = useState(false)
   const allCategories = [...DEFAULT_CATEGORIES, ...customCategories.filter(c => !DEFAULT_CATEGORIES.includes(c))]
+
+  const fetchCategories = async () => {
+    if (!token) return
+    try {
+      const cats = await api.get<{ name: string }[]>('/expenses/categories', token)
+      setCustomCategories(cats.map(c => c.name))
+    } catch (err) { console.error(err) }
+  }
 
   const fetchAll = async () => {
     if (!token) return
@@ -71,6 +78,7 @@ export default function ExpensesPage() {
 
   useEffect(() => {
     fetchAll()
+    fetchCategories()
     if (user?.channelId && !form.channelId) setForm(f => ({ ...f, channelId: user.channelId! }))
   }, [token, user?.channelId, startDate, endDate, selectedChannel])
 
@@ -79,10 +87,10 @@ export default function ExpensesPage() {
     if (!form.channelId || !form.description || form.amount <= 0) return alert('Fill in all required fields')
     setSaving(true)
     try {
-      const payload = { channelId: form.channelId, description: form.description, amount: form.amount, ...(form.category && { category: form.category }), ...(form.receiptRef && { receiptRef: form.receiptRef }), ...(form.notes && { notes: form.notes }) }
+      const payload = { channelId: form.channelId, description: form.description, amount: form.amount, paymentSource: form.paymentSource, ...(form.category && { category: form.category }), ...(form.receiptRef && { receiptRef: form.receiptRef }), ...(form.notes && { notes: form.notes }) }
       await api.post('/expenses', payload, token!)
       setShowModal(false)
-      setForm({ channelId: user?.channelId || '', description: '', amount: 0, category: '', receiptRef: '', notes: '' })
+      setForm({ channelId: user?.channelId || '', description: '', amount: 0, category: '', receiptRef: '', notes: '', paymentSource: 'CASH' })
       fetchAll()
     } catch (err) { alert('Failed: ' + (err as Error).message) }
     finally { setSaving(false) }
@@ -161,15 +169,16 @@ export default function ExpensesPage() {
       <div className="card">
         {loading ? <div style={{ padding: 40, textAlign: 'center' }}>Loading...</div> : (
           <table className="table">
-            <thead><tr><th>ID</th><th>Description</th><th>Category</th><th>Channel</th><th>Amount</th><th>Date & Time</th></tr></thead>
+            <thead><tr><th>ID</th><th>Description</th><th>Category</th><th>Paid From</th><th>Channel</th><th>Amount</th><th>Date & Time</th></tr></thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No expenses found matching &quot;{search}&quot;.</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 32 }}>No expenses found matching &quot;{search}&quot;.</td></tr>
               ) : filtered.map(e => (
                 <tr key={e.id}>
                   <td><code style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{e.id.slice(0, 8).toUpperCase()}</code></td>
                   <td><strong>{e.description}</strong>{e.receiptRef && <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Ref: {e.receiptRef}</div>}</td>
                   <td>{e.category ? <span className="badge badge-info">{e.category}</span> : '—'}</td>
+                  <td>{e.paymentSource || 'CASH'}</td>
                   <td>{e.channel?.name || '—'}</td>
                   <td style={{ fontWeight: 600, color: 'var(--danger)' }}>{fmt(e.amount)}</td>
                   <td style={{ fontSize: '0.82rem', whiteSpace: 'nowrap' }}>{new Date(e.createdAt).toLocaleString()}</td>
@@ -204,6 +213,15 @@ export default function ExpensesPage() {
                   <input type="number" className="input" min="1" step="0.01" value={form.amount || ''} onChange={e => setForm({ ...form, amount: Number(e.target.value) })} required />
                 </div>
                 <div className="form-group" style={{ flex: 1 }}>
+                  <label>Paid From</label>
+                  <select className="input" value={form.paymentSource} onChange={e => setForm({ ...form, paymentSource: e.target.value })}>
+                    <option value="CASH">Cash</option>
+                    <option value="BANK">Bank</option>
+                    <option value="CREDITOR">Creditor (on account)</option>
+                    <option value="CAPITAL">Owner Capital</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
                   <label style={{ display: 'flex', justifyContent: 'space-between' }}>
                     Category
                     <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: '0.8rem' }} onClick={() => setShowNewCat(!showNewCat)}>+ New Category</button>
@@ -211,15 +229,19 @@ export default function ExpensesPage() {
                   {showNewCat ? (
                     <div style={{ display: 'flex', gap: 6 }}>
                       <input className="input" style={{ flex: 1 }} value={newCatName} onChange={e => setNewCatName(e.target.value)} placeholder="Category name..." autoFocus />
-                      <button type="button" className="btn btn-primary btn-sm" onClick={() => {
-                        if (!newCatName.trim()) return
-                        const updated = [...customCategories, newCatName.trim()]
-                        setCustomCategories(updated)
-                        localStorage.setItem('expenseCategories', JSON.stringify(updated))
-                        setForm(f => ({ ...f, category: newCatName.trim() }))
-                        setNewCatName('')
-                        setShowNewCat(false)
-                      }}>Add</button>
+                      <button type="button" className="btn btn-primary btn-sm" disabled={savingCat} onClick={async () => {
+                        const name = newCatName.trim()
+                        if (!name) return
+                        setSavingCat(true)
+                        try {
+                          await api.post('/expenses/categories', { name }, token!)
+                          await fetchCategories()
+                          setForm(f => ({ ...f, category: name }))
+                          setNewCatName('')
+                          setShowNewCat(false)
+                        } catch (err) { alert('Failed: ' + (err as Error).message) }
+                        finally { setSavingCat(false) }
+                      }}>{savingCat ? '...' : 'Add'}</button>
                     </div>
                   ) : (
                     <select className="input" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>

@@ -85,9 +85,11 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
       name:        z.string().min(1),
       phone:       z.string().min(10).max(13).regex(/^[+0-9]+$/, 'Invalid phone number format'),
       email:       z.string().email().optional(),
-      tier:        z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
-      creditLimit: z.coerce.number().min(0).optional(),
-      channelId:   z.string().uuid().optional(),
+      tier:          z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
+      creditLimit:   z.coerce.number().min(0).optional(),
+      channelId:     z.string().uuid().optional(),
+      contactPerson: z.string().max(100).optional(),
+      isThirdParty:  z.boolean().optional(),
     }).parse(request.body)
 
     const channelId = isHQ ? (body.channelId || request.user.channelId) : request.user.channelId
@@ -121,8 +123,10 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
       name:        z.string().optional(),
       phone:       z.string().min(10).max(13).regex(/^[+0-9]+$/).optional(),
       email:       z.string().email().optional(),
-      tier:        z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
-      creditLimit: z.coerce.number().min(0).optional(),
+      tier:          z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
+      creditLimit:   z.coerce.number().min(0).optional(),
+      contactPerson: z.string().max(100).optional(),
+      isThirdParty:  z.boolean().optional(),
     }).parse(request.body)
 
     // FIX 10: Pass undefined (not '') for HQ users.

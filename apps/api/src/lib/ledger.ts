@@ -97,13 +97,22 @@ export async function buildSaleJournalEntry(
 }
 
 // ── EXPENSE ───────────────────────────────────────────────────────────
-// DR: General Expense / CR: Cash on Hand
+// DR: General Expense / CR: Cash, Bank, Accounts Payable, or Retained Earnings —
+// depending on how the expense was funded.
+const EXPENSE_CREDIT_ACCOUNT: Record<string, string> = {
+  CASH:     ACCOUNT_IDS.CASH_ON_HAND,
+  BANK:     ACCOUNT_IDS.BANK_ACCOUNT,
+  CREDITOR: ACCOUNT_IDS.ACCOUNTS_PAYABLE,
+  CAPITAL:  ACCOUNT_IDS.RETAINED_EARNINGS,
+}
+
 export async function buildExpenseJournalEntry(
   tx:      TransactionClient,
-  expense: { id: string; description: string; amount: number | { toNumber(): number }; channelId: string },
+  expense: { id: string; description: string; amount: number | { toNumber(): number }; channelId: string; paymentSource?: string },
   postedBy: string
 ) {
   const amount = toNum(expense.amount)
+  const creditAccountId = EXPENSE_CREDIT_ACCOUNT[expense.paymentSource ?? 'CASH'] ?? ACCOUNT_IDS.CASH_ON_HAND
 
   const je = await tx.journalEntry.create({
     data: {
@@ -118,7 +127,7 @@ export async function buildExpenseJournalEntry(
   await tx.ledgerLine.createMany({
     data: [
       { journalEntryId: je.id, accountId: ACCOUNT_IDS.GENERAL_EXPENSE, debitAmount: amount, creditAmount: 0 },
-      { journalEntryId: je.id, accountId: ACCOUNT_IDS.CASH_ON_HAND,    debitAmount: 0,      creditAmount: amount },
+      { journalEntryId: je.id, accountId: creditAccountId,             debitAmount: 0,      creditAmount: amount },
     ],
   })
 

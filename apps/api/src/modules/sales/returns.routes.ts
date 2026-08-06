@@ -46,7 +46,7 @@ export const returnsRoutes: FastifyPluginAsync = async (app) => {
       throw { statusCode: 400, message: 'Your account has no channel assigned' }
     }
 
-    const result = await processReturn(saleId, lines, request.user.sub, isHQ ? undefined : request.user.channelId!)
+    const result = await processReturn(saleId, lines, request.user.sub, request.user.role, isHQ ? undefined : request.user.channelId!)
     reply.status(201).send(result)
   })
 }
