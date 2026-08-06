@@ -7,20 +7,19 @@ import { authLogger } from '../../lib/logger.js'
 import type { LoginInput, RegisterInput, ChangePasswordInput } from './auth.schema.js'
 
 const MAX_FAILED_ATTEMPTS = 10
-const ENFORCED_MFA_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export class AuthService {
 
   // ── Login ────────────────────────────────────────────────────────────
   async login(input: LoginInput) {
     const user = await prisma.user.findUnique({
-      where:   { email: input.email },
+      where:   { username: input.username },
       include: { channel: true },
     })
 
     if (!user) {
-      authLogger.warn({ email: input.email }, 'login failed — user not found')
-      throw { statusCode: 401, message: 'Invalid email or password' }
+      authLogger.warn({ username: input.username }, 'login failed — user not found')
+      throw { statusCode: 401, message: 'Invalid username or password' }
     }
 
     if (user.status === 'INACTIVE') {
@@ -32,7 +31,7 @@ export class AuthService {
     try {
       valid = await verifyPassword(user.passwordHash, input.password)
     } catch {
-      throw { statusCode: 401, message: 'Invalid email or password' }
+      throw { statusCode: 401, message: 'Invalid username or password' }
     }
 
     if (!valid) {
@@ -49,37 +48,14 @@ export class AuthService {
         throw { statusCode: 403, message: 'Account locked after too many failed attempts. Contact your administrator.' }
       }
 
-      authLogger.warn({ userId: user.id, email: input.email, failures }, 'login failed — wrong password')
-      throw { statusCode: 401, message: 'Invalid email or password' }
+      authLogger.warn({ userId: user.id, username: input.username, failures }, 'login failed — wrong password')
+      throw { statusCode: 401, message: 'Invalid username or password' }
     }
 
     await redis.del(`login_failures:${user.id}`)
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
 
-    // ── MFA required ──────────────────────────────────────────────────
-    const isEnforcedRole = ENFORCED_MFA_ROLES.includes(user.role)
-    
-    if (user.mfaEnabled) {
-      const tempToken = signAccessToken({
-        sub: user.id, username: user.username, email: user.email, role: user.role,
-        channelId: user.channelId, mfaVerified: false,
-      })
-      authLogger.info({ userId: user.id }, 'login — MFA required, temp token issued')
-      return { requiresMfa: true, tempToken, user: this.sanitizeUser(user) }
-    }
-
-    if (isEnforcedRole) {
-      // FIX 1: Enforce MFA for high-privilege roles. Even if not enabled,
-      // we issue a restricted token (mfaVerified: false) which is only
-      // allowed to reach /mfa/setup and /mfa/enable.
-      const tempToken = signAccessToken({
-        sub: user.id, username: user.username, email: user.email, role: user.role,
-        channelId: user.channelId, mfaVerified: false,
-      })
-      authLogger.warn({ userId: user.id, role: user.role }, 'login — MFA enforced but not enabled, restricted token issued')
-      return { requiresMfa: true, mfaSetupRequired: true, tempToken, user: this.sanitizeUser(user) }
-    }
-
+    // MFA is disabled — always issue a fully verified token
     const accessToken  = signAccessToken({
       sub: user.id, username: user.username, email: user.email, role: user.role,
       channelId: user.channelId, mfaVerified: true,

@@ -19,7 +19,7 @@ describe('Auth Smoke Test', () => {
       method: 'POST',
       url: '/v1/auth/login',
       payload: {
-        email: 'nonexistent@test.com',
+        username: 'nonexistent',
         password: 'wrongpassword'
       }
     })
