@@ -3,7 +3,7 @@ import { Toaster } from 'react-hot-toast'
 import './globals.css'
 import './print.css'
 export const metadata: Metadata = {
-  title: 'BRAYN POS — Hybrid Edition',
+  title: 'LUX POS — Hybrid Edition',
   description: 'Enterprise AI Ingestion POS System — Double-Entry Ledger, CRDT Offline, Temporal Payroll',
 }
 

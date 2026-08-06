@@ -30,6 +30,10 @@ export default function CreditPage() {
   const [pay, setPay] = useState({ saleId: '', amount: 0, method: 'CASH', reference: '' })
   const [payStep, setPayStep] = useState(1) // 1: Entry, 2: Agreement, 3: Final Confirm
   const [sortBy, setSortBy] = useState<'name' | 'dueDate' | 'amount'>('dueDate')
+  const [showAging, setShowAging] = useState(false)
+  const [aging, setAging] = useState<{ buckets: any[]; totals: any } | null>(null)
+  const [supplierBalances, setSupplierBalances] = useState<any[]>([])
+  const [loadingAging, setLoadingAging] = useState(false)
 
   // Fetch all credit customers using the sales endpoint with credit filter
   const fetchBalances = async () => {
@@ -71,6 +75,22 @@ export default function CreditPage() {
     } catch (err) { console.error(err) }
     finally { setLoadingBalances(false) }
   }
+
+  const fetchAging = async () => {
+    if (!token) return
+    setLoadingAging(true)
+    try {
+      const [arRes, apRes] = await Promise.all([
+        api.get<{ buckets: any[]; totals: any }>('/credit/aging', token),
+        api.get<any[]>('/credit/supplier-balances', token),
+      ])
+      setAging(arRes)
+      setSupplierBalances(apRes)
+    } catch (err) { console.error(err) }
+    finally { setLoadingAging(false) }
+  }
+
+  useEffect(() => { if (showAging && !aging) fetchAging() }, [showAging, token])
 
   const getExportData = async () => {
     if (selected) {
@@ -148,14 +168,96 @@ export default function CreditPage() {
     <div className="animate-fade-in">
       <div className="page-header" style={{ flexWrap: 'wrap', gap: 12 }}>
         <h1>Credit Management</h1>
-        <div style={{ marginLeft: 'auto' }}>
-          <ExportMenu 
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className={`btn ${showAging ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setShowAging(s => !s)}>
+            {showAging ? '✓ Aging Report' : '📅 Aging Report'}
+          </button>
+          <ExportMenu
             title={selected ? `Credit_History_${selected.name}` : 'Debtors_List'}
             headers={selected ? ['Receipt #', 'Total', 'Paid', 'Outstanding', 'Date', 'Due Date'] : ['Customer', 'Phone', 'Unpaid Count', 'Earliest Due', 'Outstanding Total']}
             getData={getExportData}
           />
         </div>
       </div>
+
+      {showAging && (
+        <div style={{ marginBottom: 20 }}>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontWeight: 600 }}>
+              Accounts Receivable Aging
+            </div>
+            {loadingAging ? (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>
+            ) : !aging || aging.buckets.length === 0 ? (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>No aged receivables — all customers current.</div>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Customer</th><th>Phone</th>
+                    <th style={{ textAlign: 'right' }}>Current</th>
+                    <th style={{ textAlign: 'right' }}>1–30 Days</th>
+                    <th style={{ textAlign: 'right' }}>31–60 Days</th>
+                    <th style={{ textAlign: 'right' }}>60+ Days</th>
+                    <th style={{ textAlign: 'right' }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aging.buckets.map((b: any) => (
+                    <tr key={b.customerId}>
+                      <td><strong>{b.customerName}</strong></td>
+                      <td>{b.phone || '—'}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(b.current)}</td>
+                      <td style={{ textAlign: 'right', color: b.days30 > 0 ? 'var(--warning)' : undefined }}>{fmt(b.days30)}</td>
+                      <td style={{ textAlign: 'right', color: b.days60 > 0 ? 'var(--warning)' : undefined }}>{fmt(b.days60)}</td>
+                      <td style={{ textAlign: 'right', color: b.days90Plus > 0 ? 'var(--danger)' : undefined, fontWeight: b.days90Plus > 0 ? 700 : 400 }}>{fmt(b.days90Plus)}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(b.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '2px solid var(--border)' }}>
+                    <td colSpan={2} style={{ fontWeight: 700 }}>Total</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(aging.totals.current)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(aging.totals.days30)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(aging.totals.days60)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(aging.totals.days90Plus)}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(aging.totals.total)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+
+          <div className="card">
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+              <strong>Supplier Balances</strong>
+              <span style={{ marginLeft: 8, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                Approximate — non-cash purchase totals per supplier. Purchases aren&apos;t tracked with due dates or partial payments, so this isn&apos;t a true aged balance.
+              </span>
+            </div>
+            {loadingAging ? (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>
+            ) : supplierBalances.length === 0 ? (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>No non-cash purchases recorded.</div>
+            ) : (
+              <table className="table">
+                <thead><tr><th>Supplier</th><th>Phone</th><th style={{ textAlign: 'right' }}>Purchases</th><th style={{ textAlign: 'right' }}>Total Value</th></tr></thead>
+                <tbody>
+                  {supplierBalances.map((s: any) => (
+                    <tr key={s.supplierId}>
+                      <td><strong>{s.supplierName}</strong></td>
+                      <td>{s.phone || '—'}</td>
+                      <td style={{ textAlign: 'right' }}>{s.purchaseCount}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700 }}>{fmt(s.totalValue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -11,6 +11,98 @@ export interface RecordRepaymentInput {
   notes?:     string | null
 }
 
+export interface AgingBucket {
+  customerId: string; customerName: string; phone: string | null
+  current: number; days30: number; days60: number; days90Plus: number; total: number
+}
+
+/** Accounts-receivable aging: outstanding CREDIT sales bucketed by days overdue past dueDate. */
+export async function getArAgingReport(channelId?: string) {
+  const customers = await prisma.customer.findMany({
+    where: { outstandingCredit: { gt: 0 }, ...(channelId && { channelId }) },
+    select: { id: true, name: true, phone: true, outstandingCredit: true },
+  })
+  if (customers.length === 0) return { buckets: [], totals: { current: 0, days30: 0, days60: 0, days90Plus: 0, total: 0 } }
+
+  const sales = await prisma.sale.findMany({
+    where: {
+      customerId: { in: customers.map(c => c.id) },
+      saleType:   'CREDIT',
+      deletedAt:  null,
+    },
+    include: { payments: true },
+  })
+
+  const now = Date.now()
+  const buckets: AgingBucket[] = customers.map(c => {
+    const row: AgingBucket = {
+      customerId: c.id, customerName: c.name, phone: c.phone,
+      current: 0, days30: 0, days60: 0, days90Plus: 0, total: 0,
+    }
+    for (const s of sales.filter(s => s.customerId === c.id)) {
+      const paid = s.payments.filter(p => p.method !== 'CREDIT').reduce((sum, p) => sum + Number(p.amount), 0)
+      const outstanding = Number(s.netAmount) - paid
+      if (outstanding <= 0) continue
+
+      const reference = s.dueDate ?? s.createdAt
+      const daysOverdue = Math.floor((now - new Date(reference).getTime()) / (1000 * 60 * 60 * 24))
+
+      if (daysOverdue <= 0)      row.current   += outstanding
+      else if (daysOverdue <= 30) row.days30   += outstanding
+      else if (daysOverdue <= 60) row.days60   += outstanding
+      else                        row.days90Plus += outstanding
+    }
+    row.total = row.current + row.days30 + row.days60 + row.days90Plus
+    return row
+  }).filter(r => r.total > 0)
+
+  const totals = buckets.reduce((acc, r) => ({
+    current:   acc.current   + r.current,
+    days30:    acc.days30    + r.days30,
+    days60:    acc.days60    + r.days60,
+    days90Plus: acc.days90Plus + r.days90Plus,
+    total:     acc.total     + r.total,
+  }), { current: 0, days30: 0, days60: 0, days90Plus: 0, total: 0 })
+
+  return { buckets: buckets.sort((a, b) => b.total - a.total), totals }
+}
+
+/**
+ * Supplier balance summary — an approximation, not a true aging report.
+ * The Purchase model has no due-date or partial-payment tracking, so this
+ * surfaces non-cash (assumed-credit) purchase totals per supplier rather
+ * than genuinely aged, per-invoice outstanding balances.
+ */
+export async function getApBalanceSummary(channelId?: string) {
+  const purchases = await prisma.purchase.groupBy({
+    by:     ['supplierId'],
+    where:  {
+      deletedAt: null,
+      paymentMethod: { not: 'CASH' },
+      ...(channelId && { channelId }),
+    },
+    _sum:   { totalCost: true },
+    _count: { _all: true },
+  })
+  if (purchases.length === 0) return []
+
+  const suppliers = await prisma.supplier.findMany({
+    where:  { id: { in: purchases.map(p => p.supplierId) } },
+    select: { id: true, name: true, phone: true },
+  })
+  const supplierById = new Map(suppliers.map(s => [s.id, s]))
+
+  return purchases
+    .map(p => ({
+      supplierId:   p.supplierId,
+      supplierName: supplierById.get(p.supplierId)?.name ?? 'Unknown supplier',
+      phone:        supplierById.get(p.supplierId)?.phone ?? null,
+      purchaseCount: p._count._all,
+      totalValue:   Number(p._sum.totalCost ?? 0),
+    }))
+    .sort((a, b) => b.totalValue - a.totalValue)
+}
+
 export async function recordRepayment(
   input: RecordRepaymentInput,
   actor: TokenPayload

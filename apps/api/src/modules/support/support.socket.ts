@@ -36,7 +36,7 @@ const SUPPORT_PHONE = process.env.SUPPORT_CONTACT_PHONE ?? 'the support team'
 const SUPPORT_EMAIL = process.env.SUPPORT_CONTACT_EMAIL ?? ''
 
 const ESCALATION_MSG =
-  `⚠️ **BRAYN CORE:** System reasoning module is unreachable. A human agent has been notified. ` +
+  `⚠️ **LUX CORE:** System reasoning module is unreachable. A human agent has been notified. ` +
   `If you do not receive a response within 5 minutes, please contact **${SUPPORT_PHONE}**` +
   (SUPPORT_EMAIL ? ` or email **${SUPPORT_EMAIL}**` : '') + ` for urgent assistance.`
 

@@ -61,7 +61,7 @@ export class SupportService {
             },
             {
               sender:  'AI',
-              content: `Hello ${userObj?.username || 'there'}! I am **BraynAI**, your dedicated operational assistant. I've received your ticket and I am ready to help you resolve this issue. How can I assist you today?`,
+              content: `Hello ${userObj?.username || 'there'}! I am **LuxAI**, your dedicated operational assistant. I've received your ticket and I am ready to help you resolve this issue. How can I assist you today?`,
             },
           ],
         },
@@ -143,7 +143,7 @@ export class SupportService {
     
     return runSupportAgent({
       ticketId:      'STANDALONE',
-      subject:       'BraynAI Portal Session',
+      subject:       'LuxAI Portal Session',
       category:      'GENERAL',
       priority:      'MEDIUM',
       actorUsername: userData?.username || username || 'User',

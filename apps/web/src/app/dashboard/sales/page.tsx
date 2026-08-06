@@ -180,6 +180,7 @@ export default function SalesPage() {
               {mySalesOnly ? '✓ My Sales' : 'All Channel Sales'}
             </button>
           )}
+          <Link href="/dashboard/sales/returns" className="btn btn-ghost">↩️ Returns</Link>
           <Link href="/dashboard/pos" className="btn btn-primary">+ New Sale</Link>
         </div>
       </div>

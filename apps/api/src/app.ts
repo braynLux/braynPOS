@@ -86,7 +86,7 @@ export async function buildApp() {
   await app.register(fastifySwagger, {
     openapi: {
       info: {
-        title:       'BraynPOS API v2.0',
+        title:       'LUX POS API v2.0',
         description: 'Hardened Production-Grade Point of Sale API',
         version:     '2.0.0',
       },
@@ -154,6 +154,9 @@ export async function buildApp() {
     const { assetsRoutes } = await import('./modules/accounting/assets.routes.js')
     await v1.register(assetsRoutes, { prefix: '/accounting/assets' })
 
+    const { bankDepositsRoutes } = await import('./modules/accounting/bank-deposits.routes.js')
+    await v1.register(bankDepositsRoutes, { prefix: '/accounting/bank-deposits' })
+
     const { sessionsRoutes } = await import('./modules/sessions/sessions.routes.js')
     await v1.register(sessionsRoutes, { prefix: '/sessions' })
 
@@ -166,6 +169,9 @@ export async function buildApp() {
     const { salesRoutes } = await import('./modules/sales/sales.routes.js')
     await v1.register(salesRoutes, { prefix: '/sales' })
 
+    const { returnsRoutes } = await import('./modules/sales/returns.routes.js')
+    await v1.register(returnsRoutes, { prefix: '/sales/returns' })
+
     const { lpoRoutes } = await import('./modules/purchases/lpo.routes.js')
     await v1.register(lpoRoutes, { prefix: '/purchases/lpo' })
 
@@ -174,6 +180,9 @@ export async function buildApp() {
 
     const { transfersRoutes } = await import('./modules/transfers/transfers.routes.js')
     await v1.register(transfersRoutes, { prefix: '/transfers' })
+
+    const { invoiceRoutes } = await import('./modules/invoicing/invoice.routes.js')
+    await v1.register(invoiceRoutes, { prefix: '/invoices' })
 
     const { expensesRoutes } = await import('./modules/expenses/expenses.routes.js')
     await v1.register(expensesRoutes, { prefix: '/expenses' })

@@ -62,23 +62,24 @@ model Channel {
   suspendedSales      SuspendedSale[]
   costAudits          CostAudit[]
   syncConflicts       SyncConflict[]
+  invoices            Invoice[]
   kraPin              String?
 
   @@map("channels")
 }
 
 model User {
-  id                 String             @id @default(uuid())
-  username           String             @unique
-  email              String             @unique
-  passwordHash       String
-  role               UserRole
-  mfaSecret          String?
-  mfaEnabled         Boolean            @default(false)
-  mfaRecoveryCodes   String[]
-  channelId          String?
-  lastLoginAt        DateTime?
-  
+  id               String    @id @default(uuid())
+  username         String    @unique
+  email            String    @unique
+  passwordHash     String
+  role             UserRole
+  mfaSecret        String?
+  mfaEnabled       Boolean   @default(false)
+  mfaRecoveryCodes String[]
+  channelId        String?
+  lastLoginAt      DateTime?
+
   // Google OAuth fields
   googleAccessToken    String?
   googleRefreshToken   String?
@@ -107,6 +108,7 @@ model User {
   targets            UserTarget[]
   repairsAssigned    RepairRequest[]    @relation("AssignedRepairs")
   resolvedConflicts  SyncConflict[]     @relation("ResolvedConflicts")
+  invoicesCreated    Invoice[]
 
   @@index([channelId])
   @@index([role])
@@ -270,6 +272,7 @@ model Item {
   transferLines     TransferLine[]
   stockTakeItems    StockTakeItem[]
   costAudits        CostAudit[]
+  invoiceLines      InvoiceLine[]
 
   @@index([categoryId])
   @@index([brandId])
@@ -352,7 +355,7 @@ model Sale {
   vatOverride      Boolean          @default(false)
   manualVatAmount  Decimal?         @db.Decimal(14, 4)
   selectedBankId   String?
-  bankSnapshot     Json?            // Snapshot for PDF rendering
+  bankSnapshot     Json? // Snapshot for PDF rendering
 
   @@index([channelId, createdAt])
   @@index([customerId])
@@ -418,6 +421,7 @@ model Customer {
   loyaltyTransactions  LoyaltyTransaction[]
   sales                Sale[]
   repairs              RepairRequest[]
+  invoices             Invoice[]
   channel              Channel?             @relation(fields: [channelId], references: [id])
 
   @@unique([channelId, phone])
@@ -456,6 +460,54 @@ model CustomerPayment {
 
   @@index([customerId])
   @@map("customer_payments")
+}
+
+model Invoice {
+  id              String        @id @default(uuid())
+  invoiceNo       String        @unique
+  type            InvoiceType   @default(INVOICE)
+  status          InvoiceStatus @default(DRAFT)
+  channelId       String
+  customerId      String
+  subtotal        Decimal       @default(0) @db.Decimal(14, 4)
+  discountAmount  Decimal       @default(0) @db.Decimal(14, 4)
+  taxAmount       Decimal       @default(0) @db.Decimal(14, 4)
+  totalAmount     Decimal       @default(0) @db.Decimal(14, 4)
+  amountPaid      Decimal       @default(0) @db.Decimal(14, 4)
+  dueDate         DateTime?
+  notes           String?
+  convertedFromId String?       @unique
+  createdBy       String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  voidedAt        DateTime?
+  channel         Channel       @relation(fields: [channelId], references: [id])
+  customer        Customer      @relation(fields: [customerId], references: [id])
+  creator         User          @relation(fields: [createdBy], references: [id])
+  convertedFrom   Invoice?      @relation("InvoiceConversion", fields: [convertedFromId], references: [id])
+  convertedTo     Invoice?      @relation("InvoiceConversion")
+  lines           InvoiceLine[]
+
+  @@index([channelId, createdAt])
+  @@index([customerId])
+  @@index([status])
+  @@index([type])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  itemId      String?
+  description String
+  quantity    Decimal @db.Decimal(12, 4)
+  unitPrice   Decimal @db.Decimal(12, 4)
+  lineTotal   Decimal @db.Decimal(14, 4)
+  invoice     Invoice @relation(fields: [invoiceId], references: [id])
+  item        Item?   @relation(fields: [itemId], references: [id])
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
 }
 
 model SalesSession {
@@ -1005,6 +1057,20 @@ enum LpoLineStatus {
   FULFILLED
 }
 
+enum InvoiceType {
+  QUOTATION
+  PROFORMA
+  INVOICE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
 enum PurchaseStatus {
   DRAFT
   COMMITTED
@@ -1277,153 +1343,152 @@ model ReceiptSequence {
 }
 
 model FixedAsset {
-  id              String    @id @default(uuid())
-  name            String
-  code            String    @unique
-  category        String    @default("GENERAL") // e.g. FURNITURE, COMPUTER, MACHINERY
-  purchaseDate    DateTime
-  purchasePrice   Decimal   @db.Decimal(14, 4)
-  depreciationRate Decimal  @default(0) @db.Decimal(8, 4) // Annual %
-  currentValue    Decimal   @default(0) @db.Decimal(14, 4)
-  channelId       String
-  channel         Channel   @relation(fields: [channelId], references: [id])
-  notes           String?
-  deletedAt       DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id               String    @id @default(uuid())
+  name             String
+  code             String    @unique
+  category         String    @default("GENERAL") // e.g. FURNITURE, COMPUTER, MACHINERY
+  purchaseDate     DateTime
+  purchasePrice    Decimal   @db.Decimal(14, 4)
+  depreciationRate Decimal   @default(0) @db.Decimal(8, 4) // Annual %
+  currentValue     Decimal   @default(0) @db.Decimal(14, 4)
+  channelId        String
+  channel          Channel   @relation(fields: [channelId], references: [id])
+  notes            String?
+  deletedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([channelId])
   @@map("fixed_assets")
 }
 
-
 model UserTarget {
-  id              String      @id @default(uuid())
-  userId          String
-  channelId       String
-  targetType      String      // MARGIN, REVENUE, SALES_COUNT
-  period          String      // WEEKLY, MONTHLY
-  targetValue     Decimal     @db.Decimal(14, 4)
-  currentValue    Decimal     @default(0) @db.Decimal(14, 4)
-  startDate       DateTime
-  endDate         DateTime
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  user            User        @relation(fields: [userId], references: [id])
-  channel         Channel     @relation(fields: [channelId], references: [id])
+  id           String   @id @default(uuid())
+  userId       String
+  channelId    String
+  targetType   String // MARGIN, REVENUE, SALES_COUNT
+  period       String // WEEKLY, MONTHLY
+  targetValue  Decimal  @db.Decimal(14, 4)
+  currentValue Decimal  @default(0) @db.Decimal(14, 4)
+  startDate    DateTime
+  endDate      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id])
+  channel      Channel  @relation(fields: [channelId], references: [id])
 
   @@map("user_targets")
 }
 
 model ServiceChecklist {
-  id              String      @id @default(uuid())
-  name            String
-  channelId       String
-  fields          Json        // Array of {label, type, required}
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  channel         Channel     @relation(fields: [channelId], references: [id])
+  id        String   @id @default(uuid())
+  name      String
+  channelId String
+  fields    Json // Array of {label, type, required}
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  channel   Channel  @relation(fields: [channelId], references: [id])
 
   @@map("service_checklists")
 }
 
 model SerialAudit {
-  id              String      @id @default(uuid())
-  serialId        String
-  action          String      // SWAP, ADJUST, DELETE
-  oldSerialNo     String?
-  newSerialNo     String?
-  reason          String
-  performedBy     String
-  createdAt       DateTime    @default(now())
-  
+  id          String   @id @default(uuid())
+  serialId    String
+  action      String // SWAP, ADJUST, DELETE
+  oldSerialNo String?
+  newSerialNo String?
+  reason      String
+  performedBy String
+  createdAt   DateTime @default(now())
+
   @@map("serial_audits")
 }
 
 model ChannelBank {
-  id              String      @id @default(uuid())
-  channelId       String
-  bankName        String
-  accountName     String
-  accountNumber   String
-  paybill         String?
-  branch          String?
-  isActive        Boolean     @default(true)
-  channel         Channel     @relation(fields: [channelId], references: [id])
-  
+  id            String  @id @default(uuid())
+  channelId     String
+  bankName      String
+  accountName   String
+  accountNumber String
+  paybill       String?
+  branch        String?
+  isActive      Boolean @default(true)
+  channel       Channel @relation(fields: [channelId], references: [id])
+
   @@map("channel_banks")
 }
 
 model RepairRequest {
-  id              String      @id @default(uuid())
-  repairNo        String      @unique
+  id              String   @id @default(uuid())
+  repairNo        String   @unique
   customerId      String
   channelId       String
   itemName        String
-  problemCategory String?     // SCREEN, BATTERY, MOTHERBOARD, etc.
+  problemCategory String? // SCREEN, BATTERY, MOTHERBOARD, etc.
   description     String
-  status          String      @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, DELIVERED
-  estimatedCost   Decimal?    @db.Decimal(14, 4)
-  actualCost      Decimal?    @db.Decimal(14, 4)
+  status          String   @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, DELIVERED
+  estimatedCost   Decimal? @db.Decimal(14, 4)
+  actualCost      Decimal? @db.Decimal(14, 4)
   assignedTo      String?
   notes           String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  customer        Customer    @relation(fields: [customerId], references: [id])
-  channel         Channel     @relation(fields: [channelId], references: [id])
-  assignedUser    User?       @relation("AssignedRepairs", fields: [assignedTo], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  customer        Customer @relation(fields: [customerId], references: [id])
+  channel         Channel  @relation(fields: [channelId], references: [id])
+  assignedUser    User?    @relation("AssignedRepairs", fields: [assignedTo], references: [id])
 
   @@map("repair_requests")
 }
 
 model SuspendedSale {
-  id              String      @id @default(uuid())
-  channelId       String
-  userId          String
-  customerData    Json?       // Snapshot of customer info
-  cartData        Json        // Snapshot of line items
-  notes           String?
-  createdAt       DateTime    @default(now())
-  channel         Channel     @relation(fields: [channelId], references: [id])
+  id           String   @id @default(uuid())
+  channelId    String
+  userId       String
+  customerData Json? // Snapshot of customer info
+  cartData     Json // Snapshot of line items
+  notes        String?
+  createdAt    DateTime @default(now())
+  channel      Channel  @relation(fields: [channelId], references: [id])
 
   @@map("suspended_sales")
 }
 
 model CostAudit {
-  id              String      @id @default(uuid())
-  itemId          String
-  channelId       String
-  oldCost         Decimal     @db.Decimal(12, 4)
-  newCost         Decimal     @db.Decimal(12, 4)
-  reason          String      // PURCHASE, MANUAL_ADJUST, CORRECTION
-  referenceId     String?     // e.g. Purchase ID or Audit ID
-  performedBy     String
-  createdAt       DateTime    @default(now())
-  item            Item        @relation(fields: [itemId], references: [id])
-  channel         Channel     @relation(fields: [channelId], references: [id])
+  id          String   @id @default(uuid())
+  itemId      String
+  channelId   String
+  oldCost     Decimal  @db.Decimal(12, 4)
+  newCost     Decimal  @db.Decimal(12, 4)
+  reason      String // PURCHASE, MANUAL_ADJUST, CORRECTION
+  referenceId String? // e.g. Purchase ID or Audit ID
+  performedBy String
+  createdAt   DateTime @default(now())
+  item        Item     @relation(fields: [itemId], references: [id])
+  channel     Channel  @relation(fields: [channelId], references: [id])
 
   @@index([itemId, channelId])
   @@map("cost_audits")
 }
 
 model SyncConflict {
-  id              String      @id @default(uuid())
-  type            String      // SERIAL_COLLISION, INVENTORY_MISMATCH, LOYALTY_ERROR
+  id              String   @id @default(uuid())
+  type            String // SERIAL_COLLISION, INVENTORY_MISMATCH, LOYALTY_ERROR
   errorMessage    String
-  salePayload     Json        // The data that failed to sync
-  totalAmount     Decimal     @db.Decimal(14, 4)
-  status          String      @default("PENDING") // PENDING, RESOLVED, VOIDED
+  salePayload     Json // The data that failed to sync
+  totalAmount     Decimal  @db.Decimal(14, 4)
+  status          String   @default("PENDING") // PENDING, RESOLVED, VOIDED
   resolutionNotes String?
   channelId       String
-  branchId        String?     // Optional branch specific
+  branchId        String? // Optional branch specific
   resolvedBy      String?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-  
-  channel         Channel     @relation(fields: [channelId], references: [id])
-  resolver        User?       @relation("ResolvedConflicts", fields: [resolvedBy], references: [id])
-  sale            Sale?       @relation(fields: [saleId], references: [id])
-  saleId          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  channel  Channel @relation(fields: [channelId], references: [id])
+  resolver User?   @relation("ResolvedConflicts", fields: [resolvedBy], references: [id])
+  sale     Sale?   @relation(fields: [saleId], references: [id])
+  saleId   String?
 
   @@index([channelId, status])
   @@map("sync_conflicts")

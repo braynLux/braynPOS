@@ -69,6 +69,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       pendingTransfersRaw,
       recentSales,
       todayCogsRaw,
+      lowStockList,
     ] = await Promise.all([
       // Sales Summary
       prisma.$queryRaw<Array<{ count: number; revenue: string | number | null }>>`
@@ -169,6 +170,24 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
             ? Prisma.sql`AND s."channelId" = ${effectiveChannelId}`
             : Prisma.empty}
       `,
+      // Itemized low-stock alert (worst-first, capped)
+      prisma.$queryRaw<Array<{
+        id: string; name: string; sku: string
+        availableQty: string | number; reorderLevel: number
+      }>>`
+        SELECT i.id, i.name, i.sku, i."reorderLevel",
+               COALESCE(SUM(ib."availableQty"), 0) AS "availableQty"
+        FROM   items i
+        LEFT   JOIN inventory_balances ib ON ib."itemId" = i.id
+        WHERE  i."deletedAt" IS NULL AND i."isActive" = true
+          ${effectiveChannelId
+            ? Prisma.sql`AND ib."channelId" = ${effectiveChannelId}`
+            : Prisma.empty}
+        GROUP  BY i.id, i."reorderLevel"
+        HAVING COALESCE(SUM(ib."availableQty"), 0) <= i."reorderLevel"
+        ORDER  BY (i."reorderLevel" - COALESCE(SUM(ib."availableQty"), 0)) DESC
+        LIMIT  10
+      `,
     ])
     // ── Safe Data Mapping ──────────────────────────────────────────
     const salesRow      = todaySalesRaw[0] || { count: 0, revenue: 0 }
@@ -190,6 +209,14 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       criticalItemsCount:    criticalStock[0]?.count    ?? 0,
       suggestedReorderCount: suggestedReorder[0]?.count ?? 0,
       pendingTransfers:      pendingTransfersRaw[0]?.count ?? 0,
+      lowStockList: lowStockList.map(i => ({
+        id:           i.id,
+        name:         i.name,
+        sku:          i.sku,
+        availableQty: Number(i.availableQty),
+        reorderLevel: i.reorderLevel,
+        severity:     Number(i.availableQty) <= CRITICAL_STOCK_THRESHOLD ? 'critical' : 'low',
+      })),
       recentSales: recentSales.map(s => ({
         id:         s.id,
         receiptNo:  s.receiptNo,

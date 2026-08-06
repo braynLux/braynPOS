@@ -13,6 +13,10 @@ interface DashboardData {
   activeChannels: number
   lowStockItems: number
   pendingTransfers: number
+  lowStockList: {
+    id: string; name: string; sku: string
+    availableQty: number; reorderLevel: number; severity: 'critical' | 'low'
+  }[]
   recentSales: {
     id: string
     receiptNo: string
@@ -128,6 +132,43 @@ export default function DashboardPage() {
           <div className="stat-card" id="stat-transfers">
             <div className="stat-value">{data?.pendingTransfers ?? 0}</div>
             <div className="stat-label">Pending Transfers</div>
+          </div>
+        </div>
+      )}
+
+      {!loading && (data?.lowStockList?.length ?? 0) > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 600, marginBottom: 16 }}>⚠️ Low Stock Alert</h2>
+          <div className="card">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>SKU</th>
+                  <th style={{ textAlign: 'right' }}>Available</th>
+                  <th style={{ textAlign: 'right' }}>Reorder Level</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data!.lowStockList.map(item => (
+                  <tr key={item.id}>
+                    <td><strong>{item.name}</strong></td>
+                    <td><code style={{ fontSize: '0.8rem' }}>{item.sku}</code></td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{item.availableQty}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>{item.reorderLevel}</td>
+                    <td>
+                      <span className={`badge ${item.severity === 'critical' ? 'badge-danger' : 'badge-warning'}`}>
+                        {item.severity === 'critical' ? 'Out of stock' : 'Low'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ padding: 12, borderTop: '1px solid var(--border)', textAlign: 'center' }}>
+              <Link href="/dashboard/stock" style={{ fontSize: '0.85rem', color: 'var(--accent)', textDecoration: 'none' }}>View full stock levels →</Link>
+            </div>
           </div>
         </div>
       )}

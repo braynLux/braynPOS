@@ -46,7 +46,7 @@ export default function LoginPage() {
     <div className="login-container">
       <div className="login-card animate-fade-in">
         <div className="brand">
-          <h1>◆ BRAYN</h1>
+          <h1>◆ LUX</h1>
         </div>
 
         {error && <div className="login-error">{error}</div>}

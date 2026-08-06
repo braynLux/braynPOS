@@ -7,7 +7,7 @@ Sales can be voided if the session is still open. Go to Sales History, find the 
 Refunds are handled by creating a 'Return' movement. This puts the item back into stock and reduces the revenue/cash account. You must specify if the refund was via Cash, Mobile Money, or Credit.
 
 ## Receipt Numbers
-BRAYN receipt numbers (e.g., RCP-MS2-20260314-0047) encode the channel code and date. 'MS2' identifies the channel, followed by YYYYMMDD and a daily sequence number.
+LUX receipt numbers (e.g., RCP-MS2-20260314-0047) encode the channel code and date. 'MS2' identifies the channel, followed by YYYYMMDD and a daily sequence number.
 
 ## Offline Sync
-If the internet is down, the BRAYN POS Terminal stores sales locally. They will automatically sync once the connection is restored. Check the 'Sync Status' in the terminal footer to see pending uploads.
+If the internet is down, the LUX POS Terminal stores sales locally. They will automatically sync once the connection is restored. Check the 'Sync Status' in the terminal footer to see pending uploads.

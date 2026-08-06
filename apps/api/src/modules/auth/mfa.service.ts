@@ -4,7 +4,7 @@ import * as OTPAuth from 'otpauth'
 import { randomBytes } from 'crypto'
 import argon2 from 'argon2'
 
-const MFA_ISSUER = process.env.MFA_ISSUER || 'BRAYN POS'
+const MFA_ISSUER = process.env.MFA_ISSUER || 'LUX POS'
 
 export class MfaService {
   /**

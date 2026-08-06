@@ -8,7 +8,7 @@ import { toast } from 'react-hot-toast'
 export default function AccountingPage() {
   const token = useAuthStore((s) => s.accessToken)
   const user = useAuthStore((s) => s.user)
-  const [tab, setTab] = useState<'chart' | 'trial' | 'pnl' | 'balance' | 'assets'>('chart')
+  const [tab, setTab] = useState<'chart' | 'trial' | 'pnl' | 'balance' | 'assets' | 'deposits'>('chart')
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
@@ -53,6 +53,15 @@ export default function AccountingPage() {
         case 'assets':
           res = await api.get(`/accounting/assets?${params}`, token)
           break
+        case 'deposits': {
+          const [deposits, banks, cashPosition] = await Promise.all([
+            api.get(`/accounting/bank-deposits?${params}`, token),
+            api.get(`/accounting/bank-deposits/banks?${params}`, token),
+            api.get(`/accounting/bank-deposits/cash-position?${params}`, token),
+          ])
+          res = { deposits: (deposits as any).data ?? [], banks, cashPosition }
+          break
+        }
       }
       setData(res)
     } catch (e) { 
@@ -155,17 +164,18 @@ export default function AccountingPage() {
       </div>
 
       <div className="tab-group" style={{ marginBottom: 24 }}>
-        {(['chart', 'trial', 'pnl', 'balance', 'assets'] as const).map(t => (
-          <button 
-            key={t} 
-            className={`btn ${tab === t ? 'btn-primary' : 'btn-ghost'}`} 
+        {(['chart', 'trial', 'pnl', 'balance', 'assets', 'deposits'] as const).map(t => (
+          <button
+            key={t}
+            className={`btn ${tab === t ? 'btn-primary' : 'btn-ghost'}`}
             onClick={() => setTab(t)}
           >
-            {t === 'chart' ? 'Chart of Accounts' : 
-             t === 'trial' ? 'Trial Balance' : 
-             t === 'pnl' ? 'Profit & Loss' : 
+            {t === 'chart' ? 'Chart of Accounts' :
+             t === 'trial' ? 'Trial Balance' :
+             t === 'pnl' ? 'Profit & Loss' :
              t === 'balance' ? 'Balance Sheet' :
-             'Fixed Assets'}
+             t === 'assets' ? 'Fixed Assets' :
+             'Bank Deposits'}
           </button>
         ))}
       </div>
@@ -185,6 +195,7 @@ export default function AccountingPage() {
           {tab === 'pnl' && renderProfitLoss(data)}
           {tab === 'balance' && renderBalanceSheet(data)}
           {tab === 'assets' && renderAssets(data)}
+          {tab === 'deposits' && renderDeposits(data)}
         </div>
       )}
     </div>
@@ -462,6 +473,97 @@ export default function AccountingPage() {
               ))}
               {assets.length === 0 && (
                 <tr><td colSpan={6} style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>No fixed assets recorded yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
+  function renderDeposits(d: { deposits: any[]; banks: any[]; cashPosition: any } | null) {
+    if (!d) return null
+    const { deposits = [], banks = [], cashPosition } = d
+
+    return (
+      <div className="animate-scale-in">
+        {cashPosition && (
+          <div className="stat-grid" style={{ marginBottom: 24 }}>
+            <div className="stat-card">
+              <div className="stat-value">{fmt(cashPosition.todayCashSales)}</div>
+              <div className="stat-label">Today&apos;s Cash Sales</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{fmt(cashPosition.todayDeposited)}</div>
+              <div className="stat-label">Deposited Today</div>
+            </div>
+            <div className="stat-card" style={{ borderLeft: '4px solid var(--accent)' }}>
+              <div className="stat-value" style={{ color: 'var(--accent)' }}>{fmt(cashPosition.cashAtHand)}</div>
+              <div className="stat-label">Cash at Hand</div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+          <h3 style={{ margin: 0 }}>Bank Accounts</h3>
+          <button className="btn btn-ghost btn-sm" onClick={() => {
+            const bankName = prompt('Bank name?')
+            const accountName = prompt('Account name?')
+            const accountNumber = prompt('Account number?')
+            if (!bankName || !accountName || !accountNumber) return
+
+            api.post('/accounting/bank-deposits/banks', {
+              bankName, accountName, accountNumber,
+              channelId: user?.channelId || '',
+            }, token!).then(() => loadTab('deposits')).catch(e => toast.error((e as Error).message))
+          }}>+ Add Bank</button>
+        </div>
+        <div className="table-container card" style={{ marginBottom: 24 }}>
+          <table>
+            <thead><tr><th>Bank</th><th>Account Name</th><th>Account No.</th><th>Branch</th></tr></thead>
+            <tbody>
+              {banks.map((b: any) => (
+                <tr key={b.id}>
+                  <td><strong>{b.bankName}</strong></td>
+                  <td>{b.accountName}</td>
+                  <td><code>{b.accountNumber}</code></td>
+                  <td>{b.branch || '—'}</td>
+                </tr>
+              ))}
+              {banks.length === 0 && (
+                <tr><td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No bank accounts configured yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+          <h3 style={{ margin: 0 }}>Deposit Log</h3>
+          <button className="btn btn-primary btn-sm" disabled={banks.length === 0} onClick={() => {
+            const amount = Number(prompt('Amount deposited?'))
+            const reference = prompt('Bank slip / reference number (optional)?') || undefined
+            if (!amount || isNaN(amount) || amount <= 0) return
+
+            api.post('/accounting/bank-deposits', {
+              amount, reference,
+              channelId: user?.channelId || '',
+            }, token!).then(() => loadTab('deposits')).catch(e => toast.error((e as Error).message))
+          }}>+ Log Deposit</button>
+        </div>
+        <div className="table-container card">
+          <table>
+            <thead><tr><th>Date</th><th>Channel</th><th>Reference</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+            <tbody>
+              {deposits.map((dep: any) => (
+                <tr key={dep.id}>
+                  <td>{new Date(dep.depositedAt).toLocaleString()}</td>
+                  <td>{dep.channel?.name || '—'}</td>
+                  <td>{dep.reference || '—'}</td>
+                  <td style={{ textAlign: 'right', fontWeight: 700, color: 'var(--success)' }}>{fmt(Number(dep.amount))}</td>
+                </tr>
+              ))}
+              {deposits.length === 0 && (
+                <tr><td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No deposits logged yet.</td></tr>
               )}
             </tbody>
           </table>

@@ -4,7 +4,7 @@
 Deductions follow a specific calculation sequence (100 is default). Pre-tax deductions (like specific pension contributions) reduce the taxable income before PAYE/Tax is calculated. Post-tax deductions are taken from the Net Salary.
 
 ## How to add tax brackets?
-Admins can update Deduction Rules > Brackets. Brackets define income ranges and the corresponding percentage or fixed rate. BRAYN uses a 'Progressive Tax' engine that applies rates cumulatively across brackets.
+Admins can update Deduction Rules > Brackets. Brackets define income ranges and the corresponding percentage or fixed rate. LUX uses a 'Progressive Tax' engine that applies rates cumulatively across brackets.
 
 ## Salary Run Process
 1. Initialize Run (Draft)

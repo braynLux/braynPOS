@@ -251,10 +251,10 @@ export default function SupportPage() {
             <>
               {loading ? (
                 <div style={{ textAlign: 'center', padding: 20 }}>Loading...</div>
-              ) : tickets.filter(t => t.subject !== 'BraynAI Session' && t.subject !== 'BRAYN AI Session').length === 0 ? (
+              ) : tickets.filter(t => t.subject !== 'BraynAI Session' && t.subject !== 'BRAYN AI Session' && t.subject !== 'BraynAI Portal Session' && t.subject !== 'LuxAI Portal Session').length === 0 ? (
                 <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-secondary)' }}>No official tickets found</div>
               ) : (
-                tickets.filter(t => t.subject !== 'BraynAI Session' && t.subject !== 'BRAYN AI Session').map((t) => (
+                tickets.filter(t => t.subject !== 'BraynAI Session' && t.subject !== 'BRAYN AI Session' && t.subject !== 'BraynAI Portal Session' && t.subject !== 'LuxAI Portal Session').map((t) => (
                   <div
                     key={t.id}
                     onClick={() => fetchTicketDetails(t.id)}
@@ -393,7 +393,7 @@ export default function SupportPage() {
                       alignItems: 'center',
                       gap: 4
                     }}>
-                      {m.sender === 'AI' ? '◆ BRAYN CORE' : m.sender === 'SYSTEM' ? '⚠️ SYSTEM' : m.sender === 'HUMAN_AGENT' ? 'Staff' : 'You'}
+                      {m.sender === 'AI' ? '◆ LUX CORE' : m.sender === 'SYSTEM' ? '⚠️ SYSTEM' : m.sender === 'HUMAN_AGENT' ? 'Staff' : 'You'}
                       {m.sender === 'AI' && <span style={{ fontSize: '0.6rem', fontWeight: 400, opacity: 0.6 }}> (Lead Systems Architect)</span>}
                     </div>
                     <div style={{ fontSize: '0.95rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>

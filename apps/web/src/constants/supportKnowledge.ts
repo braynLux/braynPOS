@@ -1,5 +1,5 @@
 export const APP_KNOWLEDGE = {
-  name: "BRAYN POS",
+  name: "LUX POS",
   version: "2.5.0",
   features: [
     {
@@ -7,7 +7,7 @@ export const APP_KNOWLEDGE = {
       description: "Dual-layer validation for every transaction across ledger and inventory."
     },
     {
-      name: "BraynAI Intelligence",
+      name: "LuxAI Intelligence",
       description: "Real-time systems diagnostic engine with architectural reasoning capabilities."
     },
     {

@@ -308,7 +308,7 @@ export function ReceiptModal({ saleId, onClose }: ReceiptModalProps) {
 
             {settings.showPoweredBy !== false && (
                <div style={{ marginTop: 20 }}>
-                 <p style={{ opacity: 0.6, fontSize: '0.65rem', fontWeight: 800, letterSpacing: '0.1em', margin: 0 }}>POWERED BY BRAYN POS</p>
+                 <p style={{ opacity: 0.6, fontSize: '0.65rem', fontWeight: 800, letterSpacing: '0.1em', margin: 0 }}>POWERED BY LUX POS</p>
                  <p style={{ fontSize: '0.5rem', opacity: 0.4 }}>v2.1.0-stab</p>
                </div>
             )}
@@ -365,7 +365,7 @@ function formatReceiptText(data: ReceiptData, settings: ReceiptSettings): string
     ...data.payments.map(p => `${p.method.replace('_', ' ')}: ${p.amount.toLocaleString()}`),
     '',
     settings.receiptFooter || '',
-    settings.showPoweredBy !== false ? 'Powered by BRAYN POS' : '',
+    settings.showPoweredBy !== false ? 'Powered by LUX POS' : '',
   ]
   return lines.filter(Boolean).join('\n')
 }

@@ -140,7 +140,7 @@ export default function PublicReceiptPage() {
           <div style={{ textAlign: 'center', marginTop: 40, paddingBottom: 10 }}>
             <p style={{ color: '#94a3b8', fontSize: '0.875rem', fontStyle: 'italic' }}>Thank you for shopping with us!</p>
             <div style={{ marginTop: 16, opacity: 0.5 }}>
-              <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: '#1e293b' }}>POWERED BY BRAYN POS</span>
+              <span style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: '#1e293b' }}>POWERED BY LUX POS</span>
             </div>
           </div>
         </div>

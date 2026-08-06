@@ -184,7 +184,7 @@ export class BluetoothPrinter {
     
     addText('\n' + (settings.receiptFooter || 'Thank you!'));
     addRaw(BOLD_ON);
-    addText('POWERED BY BRAYN POS');
+    addText('POWERED BY LUX POS');
     addRaw(BOLD_OFF);
     addText('\n\n\n'); // Feed
     addRaw(CUT);
