@@ -431,24 +431,6 @@ export default function SettingsPage() {
                   <button type="submit" className="btn btn-primary" style={{ width: 'fit-content' }}>Change Password</button>
                 </form>
               </div>
-              <div className="card" style={{ padding: 24, borderLeft: user?.mfaEnabled ? 'none' : '4px solid var(--warning)' }}>
-                <h3 style={{ marginBottom: 16 }}>🛡️ Two-Factor Authentication (MFA)</h3>
-                {!user?.mfaEnabled && isAdmin && (
-                  <div style={{ padding: '12px 16px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, marginBottom: 20 }}>
-                    <div style={{ fontWeight: 700, color: 'var(--warning)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      ⚠️ MFA Setup Required
-                    </div>
-                    <p style={{ fontSize: '0.85rem', marginTop: 4 }}>
-                      As an administrator, MFA is mandatory for your account. Until enabled, your access to core financial and inventory functions remains restricted.
-                    </p>
-                  </div>
-                )}
-                <p style={{ color: 'var(--text-muted)', marginBottom: 16, fontSize: '0.9rem' }}>Protect your account with TOTP-based two-factor authentication.</p>
-                <button className="btn btn-ghost" onClick={() => window.location.href = '/dashboard/mfa-setup'}>
-                  {user?.mfaEnabled ? 'Manage MFA Settings' : 'Setup MFA Now'}
-                </button>
-              </div>
-
               <div className="card" style={{ padding: 24 }}>
                 <h3 style={{ marginBottom: 8 }}>📱 Device Sessions</h3>
                 <p style={{ color: 'var(--text-muted)', marginBottom: 20, fontSize: '0.9rem' }}>
