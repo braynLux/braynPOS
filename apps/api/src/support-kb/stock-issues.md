@@ -1,7 +1,7 @@
 # Stock Issues
 
 ## Why is my stock showing as negative?
-Negative stock in BRAYN occurs when an offline sale is synced after stock was already depleted by another transaction. This is intentional — the system commits offline sales in good faith and notifies admins via a NEGATIVE_STOCK notification. To resolve: check the Notifications panel, identify the item, and create a manual ADJUSTMENT_IN stock movement to correct the balance.
+Negative stock in LUX occurs when an offline sale is synced after stock was already depleted by another transaction. This is intentional — the system commits offline sales in good faith and notifies admins via a NEGATIVE_STOCK notification. To resolve: check the Notifications panel, identify the item, and create a manual ADJUSTMENT_IN stock movement to correct the balance.
 
 ## How does the stock level update?
 Stock levels are maintained by a PostgreSQL trigger on the stock_movements table. Every INSERT into stock_movements automatically updates inventory_balances. This is synchronous and immediate — no background job is involved. The materialized view (stock_levels) is for reporting only and refreshes every 5 minutes. It is NOT used for sale validation.

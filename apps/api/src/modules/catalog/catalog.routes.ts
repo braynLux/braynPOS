@@ -110,7 +110,7 @@ export const catalogRoutes: FastifyPluginAsync = async (app) => {
         primaryColor: '#0ea5e9',
         catalogPublic: true,
       },
-      business: business || { businessName: 'BraynPOS Retail' },
+      business: business || { businessName: 'LUX POS Retail' },
     }
   }
 

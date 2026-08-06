@@ -8,8 +8,8 @@ import { useAuthStore } from '@/stores/auth.store';
 const BRAYN_FACTS = [
   "Did you know? Stock takes left untouched for over 72 hours are automatically cancelled to keep your data clean.",
   "Did you know? You can now sort your Debtors by 'Due Date' to prioritize urgent collections.",
-  "Did you know? BRAYN AI can draw charts! Ask me to 'Show sales as a bar chart' for instance.",
-  "Did you know? You can toggle the 'Powered by BRAYN' footer in your receipt settings.",
+  "Did you know? LUX AI can draw charts! Ask me to 'Show sales as a bar chart' for instance.",
+  "Did you know? You can toggle the 'Powered by LUX' footer in your receipt settings.",
   "Did you know? Opening Stock allows you to input initial inventory without creating accounting ledger entries.",
   "Did you know? Each channel can have its own custom commission rates, overriding the global 12% default.",
   "Did you know? Our forensic engine tracks every unit of stock across transfers for 100% accountability.",
@@ -79,7 +79,7 @@ export default function AIPortalPage() {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--text-primary)' }}>
-                BRAYN SYSTEMS ARCHITECT Portal
+                LUX SYSTEMS ARCHITECT Portal
               </span>
               <span style={{
                 padding:         '1px 7px',
@@ -173,7 +173,7 @@ export default function AIPortalPage() {
         flexShrink:          0,
       }}>
         {[
-          { title: 'Ledger Integrity',  body: 'BRAYN CORE monitors all double-entry movements for variance forensics.' },
+          { title: 'Ledger Integrity',  body: 'LUX CORE monitors all double-entry movements for variance forensics.' },
           { title: 'Stock Forensics',   body: 'Automated reconciliation of stock takes against virtual ledger balances.' },
           { title: 'Security Authority',body: 'Strict channel isolation and role-based access control enforcement.' },
         ].map(card => (

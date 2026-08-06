@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS "sync_conflicts" (
     CONSTRAINT "sync_conflicts_pkey" PRIMARY KEY ("id")
 );
 ALTER TABLE IF EXISTS "sync_conflicts" ADD COLUMN IF NOT EXISTS "channelId" TEXT;
+ALTER TABLE IF EXISTS "sync_conflicts" ADD COLUMN IF NOT EXISTS "errorMessage" TEXT;
+ALTER TABLE IF EXISTS "sync_conflicts" ADD COLUMN IF NOT EXISTS "salePayload" JSONB;
+ALTER TABLE IF EXISTS "sync_conflicts" ADD COLUMN IF NOT EXISTS "totalAmount" DECIMAL(14,4);
+ALTER TABLE IF EXISTS "sync_conflicts" ADD COLUMN IF NOT EXISTS "status" TEXT NOT NULL DEFAULT 'PENDING';
+ALTER TABLE IF EXISTS "sync_conflicts" ADD COLUMN IF NOT EXISTS "branchId" TEXT;
+ALTER TABLE IF EXISTS "sync_conflicts" ALTER COLUMN "saleId" DROP NOT NULL;
+ALTER TABLE IF EXISTS "sync_conflicts" DROP COLUMN IF EXISTS "resolved";
+ALTER TABLE IF EXISTS "sync_conflicts" DROP COLUMN IF EXISTS "resolvedAt";
+ALTER TABLE IF EXISTS "sync_conflicts" DROP COLUMN IF EXISTS "description";
 CREATE INDEX IF NOT EXISTS "sync_conflicts_channelId_status_idx" ON "sync_conflicts"("channelId", "status");
 ALTER TABLE "sync_conflicts" DROP CONSTRAINT IF EXISTS "sync_conflicts_channelId_fkey";
 ALTER TABLE "sync_conflicts" ADD CONSTRAINT "sync_conflicts_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "channels"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

@@ -113,7 +113,7 @@ export default function PublicCatalogPage() {
       </main>
 
       <footer style={{ textAlign: 'center', padding: '40px', color: '#9ca3af', fontSize: '0.85rem' }}>
-        Powered by BraynPOS Digital Catalog
+        Powered by LUX POS Digital Catalog
       </footer>
     </div>
   )

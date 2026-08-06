@@ -447,7 +447,7 @@ export default function SettingsPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div className="form-group" style={{ gridColumn: '1/-1' }}>
                   <label>Business Name</label>
-                  <input className="input" value={biz.businessName} onChange={e => setBiz({ ...biz, businessName: e.target.value })} placeholder="e.g. Brayn Enterprises Ltd" />
+                  <input className="input" value={biz.businessName} onChange={e => setBiz({ ...biz, businessName: e.target.value })} placeholder="e.g. LUX Enterprises Ltd" />
                 </div>
                 <div className="form-group">
                   <label>VAT / PIN Number</label>
@@ -509,7 +509,7 @@ export default function SettingsPage() {
                     <label className="checkbox-label"><input type="checkbox" checked={receipt.showCashierName} onChange={e => setReceipt({ ...receipt, showCashierName: e.target.checked })} /> Cashier Name</label>
                     <label className="checkbox-label"><input type="checkbox" checked={receipt.showCustomerInfo} onChange={e => setReceipt({ ...receipt, showCustomerInfo: e.target.checked })} /> Customer Details</label>
                     <label className="checkbox-label"><input type="checkbox" checked={receipt.showBarcode} onChange={e => setReceipt({ ...receipt, showBarcode: e.target.checked })} /> Barcode/QR</label>
-                    <label className="checkbox-label"><input type="checkbox" checked={receipt.showPoweredBy} onChange={e => setReceipt({ ...receipt, showPoweredBy: e.target.checked })} /> Powered by BRAYN</label>
+                    <label className="checkbox-label"><input type="checkbox" checked={receipt.showPoweredBy} onChange={e => setReceipt({ ...receipt, showPoweredBy: e.target.checked })} /> Powered by LUX</label>
                   </div>
 
                   <h4 style={{ fontSize: '0.9rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 12 }}>Custom Messages</h4>
@@ -974,7 +974,7 @@ export default function SettingsPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <label style={{ display: 'flex', gap: 12, cursor: 'pointer' }}>
                   <input type="checkbox" checked={advanced.autoBackup} onChange={e => setAdvanced({ ...advanced, autoBackup: e.target.checked })} />
-                  <div><strong>Automated Remote Backups</strong><div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Replicate DB locally to Brayn cloud snapshot containers</div></div>
+                  <div><strong>Automated Remote Backups</strong><div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Replicate DB locally to LUX cloud snapshot containers</div></div>
                 </label>
                 {advanced.autoBackup && (
                   <div className="form-group" style={{ marginLeft: 24 }}>

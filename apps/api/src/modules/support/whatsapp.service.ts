@@ -31,7 +31,7 @@ export class WhatsAppService {
         body: new URLSearchParams({
           username: this.AT_USERNAME,
           to,
-          message:  `🚨 *BRAYN CORE ALERT*\n\n${message}`,
+          message:  `🚨 *LUX CORE ALERT*\n\n${message}`,
           from:     process.env.AT_WHATSAPP_NUMBER || '',
         }),
       })

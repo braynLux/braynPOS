@@ -19,6 +19,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
     { group: 'Operations', items: [
       { href: '/dashboard/sales',      label: '💰 Sales',             icon: '💰' },
       { href: '/dashboard/purchases',  label: '📦 Purchases',         icon: '📦' },
+      { href: '/dashboard/invoicing',  label: '🧾 Invoicing',         icon: '🧾' },
       { href: '/dashboard/transfers',  label: '🔄 Transfers',         icon: '🔄' },
       { href: '/dashboard/expenses',   label: '💸 Expenses',          icon: '💸' },
       { href: '/dashboard/customers',  label: '👥 Customers',         icon: '👥' },
@@ -40,7 +41,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
       { href: '/dashboard/channels',   label: '🏪 Channels',          icon: '🏪' },
       { href: '/dashboard/users',      label: '👥 Users',             icon: '👥' },
       { href: '/dashboard/reports',    label: '📊 Reports',           icon: '📊' },
-      { href: '/dashboard/ai-portal',  label: '🤖 BraynAI',           icon: '🤖' },
+      { href: '/dashboard/ai-portal',  label: '🤖 LuxAI',             icon: '🤖' },
       { href: '/dashboard/support',    label: '🎧 Support',           icon: '🎧' },
       { href: '/dashboard/audit',      label: '📜 Audit Trail',       icon: '📜' },
       { href: '/dashboard/audit/margin-audit', label: '🛡️ Forensic Audit', icon: '🛡️' },
@@ -58,6 +59,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
     { group: 'Operations', items: [
       { href: '/dashboard/sales',      label: '💰 Sales',             icon: '💰' },
       { href: '/dashboard/purchases',  label: '📦 Purchases',         icon: '📦' },
+      { href: '/dashboard/invoicing',  label: '🧾 Invoicing',         icon: '🧾' },
       { href: '/dashboard/transfers',  label: '🔄 Transfers',         icon: '🔄' },
       { href: '/dashboard/expenses',   label: '💸 Expenses',          icon: '💸' },
       { href: '/dashboard/customers',  label: '👥 Customers',         icon: '👥' },
@@ -77,7 +79,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
       { href: '/dashboard/channels',   label: '🏪 Channels',          icon: '🏪' },
       { href: '/dashboard/users',      label: '👥 Users',             icon: '👥' },
       { href: '/dashboard/reports',    label: '📊 Reports',           icon: '📊' },
-      { href: '/dashboard/ai-portal',  label: '🤖 BraynAI',           icon: '🤖' },
+      { href: '/dashboard/ai-portal',  label: '🤖 LuxAI',             icon: '🤖' },
       { href: '/dashboard/support',    label: '🎧 Support',           icon: '🎧' },
       { href: '/dashboard/audit',      label: '📜 Audit Trail',       icon: '📜' },
       { href: '/dashboard/audit/margin-audit', label: '🛡️ Forensic Audit', icon: '🛡️' },
@@ -95,6 +97,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
     { group: 'Operations', items: [
       { href: '/dashboard/sales',      label: '💰 Sales',             icon: '💰' },
       { href: '/dashboard/purchases',  label: '📦 Purchases',         icon: '📦' },
+      { href: '/dashboard/invoicing',  label: '🧾 Invoicing',         icon: '🧾' },
       { href: '/dashboard/transfers',  label: '🔄 Transfers',         icon: '🔄' },
       { href: '/dashboard/expenses',   label: '💸 Expenses',          icon: '💸' },
       { href: '/dashboard/customers',  label: '👥 Customers',         icon: '👥' },
@@ -114,7 +117,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
       { href: '/dashboard/channels',   label: '🏪 Channels',          icon: '🏪' },
       { href: '/dashboard/users',      label: '👥 Users',             icon: '👥' },
       { href: '/dashboard/reports',    label: '📊 Reports',           icon: '📊' },
-      { href: '/dashboard/ai-portal',  label: '🤖 BraynAI',           icon: '🤖' },
+      { href: '/dashboard/ai-portal',  label: '🤖 LuxAI',             icon: '🤖' },
       { href: '/dashboard/support',    label: '🎧 Support',           icon: '🎧' },
       { href: '/dashboard/audit',      label: '📜 Audit Trail',       icon: '📜' },
       { href: '/dashboard/audit/margin-audit', label: '🛡️ Forensic Audit', icon: '🛡️' },
@@ -130,6 +133,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
     { group: 'Operations', items: [
       { href: '/dashboard/sales',      label: '💰 Sales',             icon: '💰' },
       { href: '/dashboard/purchases',  label: '📦 Purchases',         icon: '📦' },
+      { href: '/dashboard/invoicing',  label: '🧾 Invoicing',         icon: '🧾' },
       { href: '/dashboard/transfers',  label: '🔄 Transfers',         icon: '🔄' },
       { href: '/dashboard/expenses',   label: '💸 Expenses',          icon: '💸' },
       { href: '/dashboard/customers',  label: '👥 Customers',         icon: '👥' },
@@ -147,7 +151,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
     { group: 'System', items: [
       { href: '/dashboard/reports',    label: '📊 Reports',           icon: '📊' },
       { href: '/dashboard/reports/insights', label: '📈 Financial Insights', icon: '📈' },
-      { href: '/dashboard/ai-portal',  label: '🤖 BraynAI',           icon: '🤖' },
+      { href: '/dashboard/ai-portal',  label: '🤖 LuxAI',             icon: '🤖' },
       { href: '/dashboard/support',    label: '🎧 Support',           icon: '🎧' },
       { href: '/dashboard/audit',      label: '📜 Audit Trail',       icon: '📜' },
       { href: '/dashboard/audit/margin-audit', label: '🛡️ Forensic Audit', icon: '🛡️' },

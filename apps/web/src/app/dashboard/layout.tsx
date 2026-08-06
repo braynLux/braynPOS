@@ -136,7 +136,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const SidebarContent = () => (
     <>
       <div className="sidebar-brand">
-        <h1>BRAYN</h1>
+        <h1>LUX</h1>
         <p style={{ marginTop: 4, opacity: 0.7 }}>Hybrid Edition v2.0</p>
       </div>
 
@@ -216,7 +216,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               {sidebarOpen ? '✕' : '☰'}
             </button>
-            <span className="mobile-brand">BRAYN</span>
+            <span className="mobile-brand">LUX</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {!isOnline && <span className="badge badge-warning" style={{ fontSize: '0.65rem' }}>Offline</span>}
               {pendingCount > 0 && <span className="badge badge-warning" style={{ fontSize: '0.65rem' }}>⚡{pendingCount}</span>}

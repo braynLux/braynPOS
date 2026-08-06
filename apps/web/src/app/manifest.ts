@@ -2,8 +2,8 @@ import { MetadataRoute } from 'next'
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'BRAYN POS — Hybrid Edition',
-    short_name: 'BRAYN POS',
+    name: 'LUX POS — Hybrid Edition',
+    short_name: 'LUX POS',
     description: 'Enterprise AI Ingestion POS System — Robust Hybrid Performance',
     start_url: '/dashboard/pos',
     display: 'standalone',

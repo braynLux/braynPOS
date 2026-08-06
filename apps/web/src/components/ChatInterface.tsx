@@ -39,8 +39,8 @@ const SUGGESTED_QUESTIONS = [
 const BRAYN_FACTS = [
   "Did you know? Stock takes left untouched for over 72 hours are automatically cancelled to keep your data clean.",
   "Did you know? You can now sort your Debtors by 'Due Date' to prioritize urgent collections.",
-  "Did you know? BRAYN AI can draw charts! Ask me to 'Show sales as a bar chart' for instance.",
-  "Did you know? You can toggle the 'Powered by BRAYN' footer in your receipt settings.",
+  "Did you know? LUX AI can draw charts! Ask me to 'Show sales as a bar chart' for instance.",
+  "Did you know? You can toggle the 'Powered by LUX' footer in your receipt settings.",
   "Did you know? Opening Stock allows you to input initial inventory without creating accounting ledger entries.",
   "Did you know? Each channel can have its own custom commission rates, overriding the global 12% default.",
   "Did you know? Our forensic engine tracks every unit of stock across transfers for 100% accountability.",
@@ -426,7 +426,7 @@ export default function ChatInterface({ isEmbedded = false }: ChatInterfaceProps
             <Bot size={17} />
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>BraynAI</div>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary)' }}>LuxAI</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
               <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--success)' }} />
               <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
@@ -523,7 +523,7 @@ export default function ChatInterface({ isEmbedded = false }: ChatInterfaceProps
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder="Message BraynAI…"
+            placeholder="Message LuxAI…"
             rows={1}
             disabled={isLoading}
             style={{
@@ -572,7 +572,7 @@ export default function ChatInterface({ isEmbedded = false }: ChatInterfaceProps
           marginTop:  8,
           letterSpacing: '0.04em',
         }}>
-          BraynAI · Shift+Enter for new line
+          LuxAI · Shift+Enter for new line
         </p>
       </div>
     </div>
@@ -589,7 +589,7 @@ export default function ChatInterface({ isEmbedded = false }: ChatInterfaceProps
       {/* Floating toggle button */}
       <button
         onClick={() => setIsOpen(o => !o)}
-        aria-label="Toggle BraynAI"
+        aria-label="Toggle LuxAI"
         style={{
           position:        'fixed',
           bottom:          24,

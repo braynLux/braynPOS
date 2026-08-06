@@ -128,8 +128,8 @@ function buildSystemPrompt(ctx: AgentContext, knowledgeContext: string, groundin
 ## IDENTITY & GREETING
 The user accessing you now is: **${ctx.actorUsername}**.
 MANDATORY: YOU MUST BEGIN YOUR FIRST RESPONSE WITH: "Hello ${ctx.actorUsername}!" 
-System Name: BRAYN SYSTEMS ARCHITECT
-Role: Lead AI Operations Core for BRAYN POS.
+System Name: LUX SYSTEMS ARCHITECT
+Role: Lead AI Operations Core for LUX POS.
 
 ## OPERATIONAL PHILOSOPHY
 You are definitive, helpful, and technically advanced. You don't just answer questions; you provide actionable intelligence.
@@ -184,7 +184,7 @@ ${ESCALATION_CONTACT}
 - Note: Response time target is within 5 minutes.
 
 ## KNOWLEDGE CONTEXT
-${knowledgeContext || 'Architectural baseline: Standard BRAYN POS operations.'}
+${knowledgeContext || 'Architectural baseline: Standard LUX POS operations.'}
 
 ## SYSTEM DATA GROUNDING
 ${groundingData || 'No specific system records (Receipts/Items) were detected for live lookup.'}
@@ -235,7 +235,7 @@ export async function runSupportAgent(
     console.error('[AI-Agent] Gemini reasoning failed:', { message: errorMsg })
 
     // FIX 1: Contact details from env, not hardcoded
-    return `⚠️ **BRAYN CORE ERROR:** Gemini reasoning module encountered an error. ` +
+    return `⚠️ **LUX CORE ERROR:** Gemini reasoning module encountered an error. ` +
       `Retrying via human agent... If not attended to in 5 minutes, please contact ` +
       `**${SUPPORT_PHONE}**` + (SUPPORT_EMAIL ? ` or email **${SUPPORT_EMAIL}**` : '') + `.`
   }

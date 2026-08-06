@@ -518,7 +518,7 @@ export default function ReportsPage() {
                       {Math.round(Math.random() * 20 + 75)}%
                     </div>
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                      Your channel is outperforming 82% of similar retail profiles in the Brayn network this month.
+                      Your channel is outperforming 82% of similar retail profiles in the LUX network this month.
                     </div>
                   </div>
                 </div>

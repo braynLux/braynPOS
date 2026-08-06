@@ -25,7 +25,7 @@ export default function Home() {
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
         }}>
-          ◆ BRAYN ◆
+          ◆ LUX ◆
         </h1>
         <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Loading...</p>
       </div>

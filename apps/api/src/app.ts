@@ -86,7 +86,7 @@ export async function buildApp() {
   await app.register(fastifySwagger, {
     openapi: {
       info: {
-        title:       'BraynPOS API v2.0',
+        title:       'LUX POS API v2.0',
         description: 'Hardened Production-Grade Point of Sale API',
         version:     '2.0.0',
       },
@@ -174,6 +174,9 @@ export async function buildApp() {
 
     const { transfersRoutes } = await import('./modules/transfers/transfers.routes.js')
     await v1.register(transfersRoutes, { prefix: '/transfers' })
+
+    const { invoiceRoutes } = await import('./modules/invoicing/invoice.routes.js')
+    await v1.register(invoiceRoutes, { prefix: '/invoices' })
 
     const { expensesRoutes } = await import('./modules/expenses/expenses.routes.js')
     await v1.register(expensesRoutes, { prefix: '/expenses' })

@@ -1,7 +1,7 @@
-# BRAYN POS MASTER OPERATIONAL KNOWLEDGE BASE
+# LUX POS MASTER OPERATIONAL KNOWLEDGE BASE
 
 ## 1. IDENTITY & PHILOSOPHY
-The BRAYN POS and ERP platform prioritizes system integrity and operational resolution through definitive, technical, and actionable intelligence.
+The LUX POS and ERP platform prioritizes system integrity and operational resolution through definitive, technical, and actionable intelligence.
 
 ## 2. SECURITY & AUTHENTICATION
 - **Roles:**
