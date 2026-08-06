@@ -4,6 +4,8 @@ import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
 
+const GLOBAL_SETTINGS_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 export const settingsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
@@ -14,10 +16,17 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /settings - Bulk update settings for the channel
   app.patch('/settings', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const body = z.record(z.any()).parse(request.body)
-    return settingsService.bulkUpdate(body, request.user.sub, request.user.channelId)
+    const isGlobalSettingsRole = GLOBAL_SETTINGS_ROLES.includes(request.user.role)
+    const channelId = isGlobalSettingsRole ? (request.user.channelId ?? null) : request.user.channelId
+
+    if (!isGlobalSettingsRole && !channelId) {
+      throw app.httpErrors.badRequest('Your account has no channel assigned')
+    }
+
+    return settingsService.bulkUpdate(body, request.user.sub, channelId ?? null)
   })
 
   // GET /settings/:key - Fetch specific setting
@@ -28,10 +37,17 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
 
   // PUT /settings/:key - Update specific setting
   app.put('/settings/:key', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { key } = request.params as { key: string }
     const { value } = z.object({ value: z.any() }).parse(request.body)
-    return settingsService.update(key, value, request.user.sub, request.user.channelId)
+    const isGlobalSettingsRole = GLOBAL_SETTINGS_ROLES.includes(request.user.role)
+    const channelId = isGlobalSettingsRole ? (request.user.channelId ?? null) : request.user.channelId
+
+    if (!isGlobalSettingsRole && !channelId) {
+      throw app.httpErrors.badRequest('Your account has no channel assigned')
+    }
+
+    return settingsService.update(key, value, request.user.sub, channelId ?? null)
   })
 }

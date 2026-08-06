@@ -23,9 +23,10 @@ export default function PublicCatalogPage() {
     // For this ERP modernization, we'll fetch global public items.
     const fetchCatalog = async () => {
       try {
+        const catalogSlug = encodeURIComponent(slug)
         const [itemsRes, settingsRes] = await Promise.all([
-          api.get<CatalogItem[]>('/public/catalog/items'),
-          api.get<any>('/public/catalog/branding')
+          api.get<CatalogItem[]>(`/public/catalog/${catalogSlug}/items`),
+          api.get<any>(`/public/catalog/${catalogSlug}/branding`)
         ])
         setItems(itemsRes)
         setBranding(settingsRes.branding)
@@ -37,7 +38,7 @@ export default function PublicCatalogPage() {
       }
     }
     fetchCatalog()
-  }, [])
+  }, [slug])
 
   if (loading) {
     return (

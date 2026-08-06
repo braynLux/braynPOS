@@ -4,12 +4,14 @@ import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
 
+const HQ_LEDGER_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 export const ledgerRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // GET /accounting/journal-entries
   app.get('/journal-entries', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional(),
@@ -20,8 +22,9 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
       limit: z.coerce.number().min(1).max(100).optional(),
     }).parse(request.query)
 
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      query.channelId = request.user.channelId || '00000000-0000-0000-0000-000000000000'
+    if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      query.channelId = request.user.channelId
     }
 
     return ledgerService.getJournalEntries(query)
@@ -29,15 +32,17 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /accounting/journal-entries/:id
   app.get('/journal-entries/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
-    return ledgerService.getJournalEntry(id)
+    const isHQ = HQ_LEDGER_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    return ledgerService.getJournalEntry(id, isHQ ? undefined : (request.user.channelId || undefined))
   })
 
   // GET /accounting/trial-balance
   app.get('/trial-balance', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       asOfDate: z.string().optional(),
@@ -45,8 +50,9 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.query)
 
     let cid = query.channelId
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      cid = request.user.channelId || '00000000-0000-0000-0000-000000000000'
+    if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      cid = request.user.channelId
     }
 
     return ledgerService.getTrialBalance(query.asOfDate, cid)
@@ -54,7 +60,7 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /accounting/ledger/:accountId
   app.get('/ledger/:accountId', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { accountId } = request.params as { accountId: string }
     const query = z.object({
@@ -65,8 +71,9 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
       channelId: z.string().uuid().optional(),
     }).parse(request.query)
 
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      query.channelId = request.user.channelId || '00000000-0000-0000-0000-000000000000'
+    if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      query.channelId = request.user.channelId
     }
 
     return ledgerService.getAccountLedger(accountId, query)
@@ -74,7 +81,7 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /accounting/profit-loss
   app.get('/profit-loss', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       startDate: z.string(),
@@ -83,8 +90,9 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.query)
 
     let cid = query.channelId
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      cid = request.user.channelId || '00000000-0000-0000-0000-000000000000'
+    if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      cid = request.user.channelId
     }
 
     return ledgerService.getProfitLoss(query.startDate, query.endDate, cid)
@@ -92,7 +100,7 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /accounting/balance-sheet
   app.get('/balance-sheet', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       asOfDate: z.string().optional(),
@@ -100,8 +108,9 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.query)
 
     let cid = query.channelId
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      cid = request.user.channelId || '00000000-0000-0000-0000-000000000000'
+    if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      cid = request.user.channelId
     }
 
     return ledgerService.getBalanceSheet(query.asOfDate, cid)
@@ -116,8 +125,9 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.query)
 
     // Secure channelId: Non-admins (and branch admins) can only view their own channel
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      channelId = request.user.channelId || 'NONE' 
+    if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      channelId = request.user.channelId
     }
 
     const { stockService } = await import('../stock/stock.service.js')
@@ -126,7 +136,7 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
     }
     
     // Safety check for Branch Admins/Managers/Storekeepers who somehow got here without a channelId
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
       return []
     }
     // Return all balances across all channels (Admin only)

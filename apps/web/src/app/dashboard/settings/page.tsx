@@ -875,10 +875,11 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <h4 style={{ margin: 0, color: 'var(--accent)' }}>Live Catalog Link</h4>
-                    <code style={{ fontSize: '1rem', display: 'block', marginTop: 4 }}>https://catalog.braynpos.com/{biz.businessName.toLowerCase().replace(/\s+/g, '-') || 'your-shop'}</code>
+                    <code style={{ fontSize: '1rem', display: 'block', marginTop: 4 }}>{typeof window !== 'undefined' ? window.location.origin : ''}/catalog/{biz.businessName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'your-shop'}</code>
                   </div>
                   <button className="btn btn-secondary btn-sm" onClick={() => {
-                    navigator.clipboard.writeText(`https://catalog.braynpos.com/${biz.businessName.toLowerCase().replace(/\s+/g, '-')}`)
+                    const slug = biz.businessName.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'your-shop'
+                    navigator.clipboard.writeText(`${window.location.origin}/catalog/${slug}`)
                     toast.success('Link copied!')
                   }}>📋 Copy Link</button>
                 </div>
@@ -892,6 +893,7 @@ export default function SettingsPage() {
                 <div className="alert alert-info">
                   💡 <strong>Catalog Sync:</strong> All items with a valid <strong>image</strong> and <strong>price</strong> are automatically synced to your digital catalog every 10 minutes.
                 </div>
+                <button className="btn btn-primary" style={{ alignSelf: 'flex-start' }} onClick={() => save('brandingSettings', branding)}>Save Catalog Settings</button>
               </div>
             </div>
           )}

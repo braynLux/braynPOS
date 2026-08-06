@@ -178,7 +178,7 @@ export class BluetoothPrinter {
       addRaw([0x1D, 0x68, 0x40]); // Height
       addRaw([0x1D, 0x77, 0x02]); // Width
       addRaw([0x1D, 0x6B, 0x49, qrData.length]); // CODE128
-      qrData.split('').forEach(c => commands.push(c.charCodeAt(0)));
+      qrData.split('').forEach((c: string) => commands.push(c.charCodeAt(0)));
       addText('\n');
     }
     

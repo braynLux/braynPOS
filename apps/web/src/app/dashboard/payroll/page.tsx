@@ -44,7 +44,7 @@ export default function PayrollPage() {
   const [loadingPayslips, setLoadingPayslips] = useState(false)
   const now = new Date()
   const [runForm, setRunForm] = useState({ month: now.getMonth() + 1, year: now.getFullYear(), channelId: '' })
-  const [editingPs, setEditingPs] = useState<{ id: string; name: string; deductions: number } | null>(null)
+  const [editingPs, setEditingPs] = useState<{ id: string; name: string; deductions: number; reason: string } | null>(null)
   const [authModal, setAuthModal] = useState<{ id: string; type: 'DELETE' | 'REVERSE' } | null>(null)
   const [password, setPassword] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
@@ -58,7 +58,12 @@ export default function PayrollPage() {
         api.get<Channel[]>('/channels', token),
       ])
       setRuns(rRes.data ?? [])
-      setChannels(Array.isArray(cRes) ? cRes : [cRes as unknown as Channel])
+      const channelList = Array.isArray(cRes) ? cRes : [cRes as unknown as Channel]
+      setChannels(channelList)
+      setRunForm(prev => ({
+        ...prev,
+        channelId: prev.channelId || user?.channelId || channelList[0]?.id || '',
+      }))
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
@@ -108,12 +113,13 @@ export default function PayrollPage() {
 
   const handleCreateRun = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!runForm.channelId) return toast.error('Select a channel for this salary run')
     setSaving(true)
     try {
-      const payload = { month: runForm.month, year: runForm.year, ...(runForm.channelId && { channelId: runForm.channelId }) }
+      const payload = { month: runForm.month, year: runForm.year, channelId: runForm.channelId }
       const res: any = await api.post('/payroll/salary-runs', payload, token!)
       setShowNewRun(false)
-      setRunForm({ month: now.getMonth() + 1, year: now.getFullYear(), channelId: '' })
+      setRunForm({ month: now.getMonth() + 1, year: now.getFullYear(), channelId: user?.channelId || channels[0]?.id || '' })
       
       if (res && res.warnings && res.warnings.length > 0) {
         toast.error(`Run created, but ${res.warnings.length} staff were skipped due to zero/invalid salaries. Check console for details.`, { duration: 6000 })
@@ -144,7 +150,10 @@ export default function PayrollPage() {
     if (!editingPs) return
     setSaving(true)
     try {
-      await api.patch(`/payroll/salary-runs/line/${editingPs.id}`, { deductionsTotal: editingPs.deductions }, token!)
+      await api.patch(`/payroll/salary-runs/line/${editingPs.id}`, {
+        deductionsTotal: editingPs.deductions,
+        reason: editingPs.reason.trim(),
+      }, token!)
       toast.success('Deductions updated!')
       setEditingPs(null)
       if (selectedRun) fetchPayslips(selectedRun.id)
@@ -326,7 +335,7 @@ export default function PayrollPage() {
                         <td data-label="Gross" style={{ textAlign: 'right' }}>{fmt(Number(ps.grossSalary) + Number(ps.allowancesTotal) + Number(ps.breakdown?.commission?.amount ?? 0))}</td>
                         <td data-label="Deductions" style={{ textAlign: 'right', color: 'var(--danger)' }}>
                           {selectedRun.status === 'DRAFT' ? (
-                            <button className="btn btn-ghost btn-sm" onClick={() => setEditingPs({ id: ps.id, name: ps.staffProfile?.user?.username || '', deductions: Number(ps.deductionsTotal) })}>
+                            <button className="btn btn-ghost btn-sm" onClick={() => setEditingPs({ id: ps.id, name: ps.staffProfile?.user?.username || '', deductions: Number(ps.deductionsTotal), reason: '' })}>
                               {fmt(ps.deductionsTotal)} ✏️
                             </button>
                           ) : (
@@ -378,14 +387,14 @@ export default function PayrollPage() {
                 </div>
               </div>
               <div className="form-group">
-                <label>Channel (Filter)</label>
+                <label>Channel *</label>
                 <select className="input" value={runForm.channelId} onChange={e => setRunForm({ ...runForm, channelId: e.target.value })}>
-                  <option value="">All Regions / Channels</option>
+                  <option value="">Select channel</option>
                   {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div style={{ backgroundColor: 'var(--bg-secondary)', padding: 12, borderRadius: 8, fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                ℹ️ All active staff profiles and their performance-based commissions will be factored into this run.
+                ℹ️ Active staff profiles and performance-based commissions for the selected channel will be factored into this run.
               </div>
               <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
                 <button type="button" className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowNewRun(false)}>Back</button>
@@ -455,6 +464,18 @@ export default function PayrollPage() {
                   onChange={e => setEditingPs({ ...editingPs, deductions: Number(e.target.value) })} 
                   required 
                   autoFocus
+                />
+              </div>
+              <div className="form-group">
+                <label>Adjustment Reason *</label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  value={editingPs.reason}
+                  onChange={e => setEditingPs({ ...editingPs, reason: e.target.value })}
+                  placeholder="e.g. Late attendance adjustment approved by HR"
+                  minLength={5}
+                  required
                 />
               </div>
               <div style={{ display: 'flex', gap: 12 }}>

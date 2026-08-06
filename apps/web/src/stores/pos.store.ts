@@ -23,10 +23,10 @@ interface POSState {
   notes: string
 
   addItem: (item: Omit<CartItem, 'discountAmount'>) => void
-  removeItem: (itemId: string) => void
-  updateQuantity: (itemId: string, quantity: number) => void
-  updatePrice: (itemId: string, unitPrice: number) => void
-  setItemDiscount: (itemId: string, discount: number) => void
+  removeItem: (itemId: string, serialId?: string) => void
+  updateQuantity: (itemId: string, quantity: number, serialId?: string) => void
+  updatePrice: (itemId: string, unitPrice: number, serialId?: string) => void
+  setItemDiscount: (itemId: string, discount: number, serialId?: string) => void
   setCustomer: (id: string | null, name: string | null) => void
   setSaleType: (type: 'RETAIL' | 'WHOLESALE' | 'CREDIT') => void
   setDiscount: (amount: number) => void
@@ -64,29 +64,31 @@ export const usePOSStore = create<POSState>()((set, get) => ({
       return { cart: [...state.cart, { ...item, discountAmount: 0 }] }
     }),
 
-  removeItem: (itemId) =>
+  removeItem: (itemId, serialId) =>
     set((state) => ({
-      cart: state.cart.filter((c) => c.itemId !== itemId),
+      cart: state.cart.filter((c) => !(c.itemId === itemId && c.serialId === serialId)),
     })),
 
-  updateQuantity: (itemId, quantity) =>
+  updateQuantity: (itemId, quantity, serialId) =>
     set((state) => ({
       cart: state.cart.map((c) =>
-        c.itemId === itemId ? { ...c, quantity: Math.max(1, quantity) } : c
+        c.itemId === itemId && c.serialId === serialId
+          ? { ...c, quantity: c.serialId ? 1 : Math.max(1, quantity) }
+          : c
       ),
     })),
 
-  updatePrice: (itemId, unitPrice) =>
+  updatePrice: (itemId, unitPrice, serialId) =>
     set((state) => ({
       cart: state.cart.map((c) =>
-        c.itemId === itemId ? { ...c, unitPrice } : c
+        c.itemId === itemId && c.serialId === serialId ? { ...c, unitPrice } : c
       ),
     })),
 
-  setItemDiscount: (itemId, discount) =>
+  setItemDiscount: (itemId, discount, serialId) =>
     set((state) => ({
       cart: state.cart.map((c) =>
-        c.itemId === itemId ? { ...c, discountAmount: discount } : c
+        c.itemId === itemId && c.serialId === serialId ? { ...c, discountAmount: discount } : c
       ),
     })),
 

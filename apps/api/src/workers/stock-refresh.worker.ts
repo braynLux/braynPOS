@@ -11,6 +11,13 @@ export function startStockRefreshWorker() {
     'stock-refresh',
     async () => {
       try {
+        const exists = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+          SELECT to_regclass('public.stock_levels') IS NOT NULL AS "exists"
+        `
+        if (!exists[0]?.exists) {
+          logger.warn('[StockRefresh] stock_levels materialized view is not installed; skipping refresh')
+          return
+        }
         await prisma.$executeRaw`REFRESH MATERIALIZED VIEW CONCURRENTLY stock_levels`
         logger.info('[StockRefresh] Materialized view refreshed')
       } catch (err) {

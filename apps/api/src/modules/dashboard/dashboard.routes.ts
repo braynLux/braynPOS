@@ -7,8 +7,19 @@ import { authenticate }     from '../../middleware/authenticate.js'
 import { authorize }        from '../../middleware/authorize.js'
 import { RATE }             from '../../lib/rate-limit.plugin.js'
 import { diagnosticsService } from '../support/diagnostics.service.js'
+import { z }                from 'zod'
 
 const CRITICAL_STOCK_THRESHOLD = 0
+const GLOBAL_SETTINGS_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
+const printerTestSchema = z.object({
+  host: z.string()
+    .trim()
+    .min(1, 'Printer host/IP is required')
+    .max(253, 'Printer host/IP is too long')
+    .regex(/^[a-zA-Z0-9.-]+$/, 'Printer host/IP must be a hostname or IPv4 address'),
+  port: z.coerce.number().int().min(1).max(65535).default(9100),
+})
 
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -22,6 +33,9 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       'CASHIER', 'SALES_PERSON', 'STOREKEEPER',
     )],
   }, async (request) => {
+    if (!GLOBAL_SETTINGS_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     return settingsService.getAll(request.user.channelId ?? null)
   })
 
@@ -36,6 +50,9 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     )],
   }, async (request) => {
     const isHQ               = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     const effectiveChannelId = isHQ ? undefined : (request.user.channelId || undefined)
 
     // FIX: Use EAT (UTC+3) start-of-day to ensure sales made after midnight show up correctly
@@ -193,8 +210,15 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     schema:     { body: { type: 'object' } },
   }, async (request) => {
     const body = request.body as Record<string, any>
+    const isGlobalSettingsRole = GLOBAL_SETTINGS_ROLES.includes(request.user.role)
+    const channelId = isGlobalSettingsRole ? (request.user.channelId ?? null) : request.user.channelId
+
+    if (!isGlobalSettingsRole && !channelId) {
+      throw app.httpErrors.badRequest('Your account has no channel assigned')
+    }
+
     // FIX 3: Use .sub not .id — consistent with the rest of the codebase
-    return settingsService.bulkUpdate(body, request.user.sub, request.user.channelId ?? null)
+    return settingsService.bulkUpdate(body, request.user.sub, channelId ?? null)
   })
 
   // GET /dashboard/health
@@ -210,8 +234,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     config: RATE.APPROVAL,
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
-    const { host, port = 9100 } = request.body as { host: string; port?: number }
-    if (!host) throw app.httpErrors.badRequest('Printer host/IP is required')
+    const { host, port } = printerTestSchema.parse(request.body)
 
     return new Promise((resolve) => {
       const socket = new net.Socket()

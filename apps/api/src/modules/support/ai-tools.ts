@@ -14,6 +14,8 @@
 
 import { prisma } from '../../lib/prisma.js'
 
+const GLOBAL_SUPPORT_TOOL_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 // FIX 2: Simple input validator to prevent arbitrary data reaching queries
 function requireFields(input: any, fields: string[]): void {
   for (const field of fields) {
@@ -48,8 +50,10 @@ export async function executeTool(
         if (!channel) return `Channel with code "${input.channelCode}" not found.`
 
         // SECURITY: Verify requested channel matches actor's channel context
-        if (actorChannelId && channel.id !== actorChannelId && !['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(actorRole || '')) {
-          return `Access Denied: You are not authorized to access data for ${channel.name}.`
+        if (!GLOBAL_SUPPORT_TOOL_ROLES.includes(actorRole || '')) {
+          if (!actorChannelId || channel.id !== actorChannelId) {
+            return `Access Denied: You are not authorized to access data for ${channel.name}.`
+          }
         }
 
         const sale = await prisma.sale.findFirst({
@@ -98,8 +102,10 @@ export async function executeTool(
         if (!channel) return `No active channel found with code "${input.channelCode}".`
 
         // SECURITY: Verify requested channel matches actor's channel context
-        if (actorChannelId && channel.id !== actorChannelId && !['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(actorRole || '')) {
-          return `Access Denied: You are not authorized to access data for ${channel.name}.`
+        if (!GLOBAL_SUPPORT_TOOL_ROLES.includes(actorRole || '')) {
+          if (!actorChannelId || channel.id !== actorChannelId) {
+            return `Access Denied: You are not authorized to access data for ${channel.name}.`
+          }
         }
 
         const rows = await prisma.$queryRaw<Array<{ availableQty: number }>>`

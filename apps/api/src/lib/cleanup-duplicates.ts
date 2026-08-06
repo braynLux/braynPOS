@@ -1,6 +1,11 @@
 import { basePrisma } from './prisma.js'
 
 export async function cleanupDuplicateItems() {
+  if (process.env.RUN_DUPLICATE_ITEM_CLEANUP !== 'true') {
+    console.log('âœ… [CLEANUP] Duplicate item cleanup skipped. Set RUN_DUPLICATE_ITEM_CLEANUP=true to run it explicitly.')
+    return
+  }
+
   console.log('🧹 [CLEANUP] Checking for duplicate items...')
 
   // Find items grouped by name that have more than 1 entry

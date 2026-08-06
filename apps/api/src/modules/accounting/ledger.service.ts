@@ -51,9 +51,9 @@ export class LedgerService {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } }
   }
 
-  async getJournalEntry(id: string) {
-    return prisma.journalEntry.findUniqueOrThrow({
-      where:   { id },
+  async getJournalEntry(id: string, channelId?: string) {
+    const entry = await prisma.journalEntry.findFirst({
+      where:   { id, ...(channelId && { channelId }) },
       include: {
         lines: {
           include: {
@@ -62,6 +62,8 @@ export class LedgerService {
         },
       },
     })
+    if (!entry) throw { statusCode: 404, message: 'Journal entry not found' }
+    return entry
   }
 
   async getTrialBalance(asOfDate?: string, channelId?: string) {

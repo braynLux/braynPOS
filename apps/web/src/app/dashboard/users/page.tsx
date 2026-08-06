@@ -154,11 +154,11 @@ export default function UsersPage() {
       setShowModal(false)
       fetchAll()
     } catch (err: any) { 
-      if (err.status === 403) {
-        toast.error('Insufficient permissions.', { icon: '🛡️' })
-      } else if (err.approvalId) {
+      if (err.approvalId) {
         toast.error(`${err.message}\nRequest ID: ${err.approvalId}`)
         setShowModal(false)
+      } else if (err.status === 403) {
+        toast.error('Insufficient permissions.', { icon: '🛡️' })
       } else {
         toast.error('Failed: ' + (err.message || 'Unknown error')) 
       }
@@ -189,11 +189,11 @@ export default function UsersPage() {
       toast.success('User deleted')
       setUserToDelete(null)
     } catch (err: any) {
-      if (err.status === 403) {
-        toast.error('Invalid password or insufficient permissions.', { icon: '🛡️' })
-      } else if (err.approvalId) {
+      if (err.approvalId) {
         toast.error(`${err.message}\nRequest ID: ${err.approvalId}`)
         setUserToDelete(null)
+      } else if (err.status === 403) {
+        toast.error('Invalid password or insufficient permissions.', { icon: '🛡️' })
       } else {
         toast.error('Failed: ' + err.message)
       }

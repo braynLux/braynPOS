@@ -21,6 +21,8 @@ const ISOLATED_MODELS = new Set([
   'Serial',
   'Transfer',
   'SupportTicket', 'LoyaltyTransaction', 'CustomerPayment',
+  'FixedAsset', 'UserTarget',
+  'SyncConflict',
   // AUDIT FIX: Previously unprotected — cross-channel data breach risk
   'User',           // Users must only see/edit users in their channel
   'BankDeposit',    // Deposits are per-channel financial records

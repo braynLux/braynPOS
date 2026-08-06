@@ -20,7 +20,7 @@ export const rateLimitPlugin = fp(async (app: FastifyInstance) => {
       retryAfter: Math.ceil(context.ttl / 1000),
     }),
     allowList: (request: any) =>
-      request.routerPath === '/health' || request.routerPath === '/ready',
+      request.routeOptions?.url === '/health' || request.routeOptions?.url === '/ready',
   })
 })
 

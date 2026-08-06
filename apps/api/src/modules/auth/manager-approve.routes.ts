@@ -12,12 +12,13 @@ const ApproveSchema = z.object({
     'void', 'refund', 'discount_override', 'price_below_min',
     'user_create', 'user_delete', 'user_update',
     'customer_delete', 'item_create', 'item_update', 'item_delete',
-    'purchase_delete', 'expense_delete', 'credit_sale', 'negative_margin'
+    'purchase_delete', 'expense_delete', 'credit_sale', 'negative_margin',
+    'channel_create', 'channel_update', 'channel_delete',
   ]),
   pin:       z.string().min(4).max(8),
   contextId: z.string(),
   channelId: z.string().uuid(),
-  marginPercent: z.number().optional(),
+  marginPercent: z.coerce.number().optional(),
 })
 
 export async function managerApproveRoutes(app: FastifyInstance) {
@@ -43,18 +44,24 @@ export async function managerApproveRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const { action, pin, contextId, channelId } = ApproveSchema.parse(request.body)
     const actor = request.user
+    const isGlobalActor = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(actor.role)
+    if (!isGlobalActor && actor.channelId !== channelId) {
+      return reply.status(403).send({ error: 'You can only request approvals for your assigned channel' })
+    }
 
-    const isUserMgmt      = ['user_create', 'user_delete', 'user_update'].includes(action)
-    const isFinanceDelete = ['purchase_delete', 'expense_delete'].includes(action)
+    const isUserMgmt       = ['user_create', 'user_delete', 'user_update'].includes(action)
+    const isFinanceDelete  = ['purchase_delete', 'expense_delete'].includes(action)
+    const isChannelMgmt    = ['channel_create', 'channel_update', 'channel_delete'].includes(action)
     const isCustomerDelete = action === 'customer_delete'
+    const isAdminOnly      = isUserMgmt || isFinanceDelete || isChannelMgmt
 
     let approverRoles: string[] = []
-    if (isUserMgmt || isFinanceDelete) {
-      approverRoles = ['SUPER_ADMIN', 'MANAGER_ADMIN']
+    if (isAdminOnly) {
+      approverRoles = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
     } else if (isCustomerDelete) {
       approverRoles = actor.channelId
-        ? ['MANAGER', 'MANAGER_ADMIN', 'SUPER_ADMIN']
-        : ['MANAGER_ADMIN', 'SUPER_ADMIN']
+        ? ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
+        : ['MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
     } else if (action === 'negative_margin' && typeof (request.body as any).marginPercent === 'number') {
       const margin = (request.body as any).marginPercent
       // Audit finding: Stepped Authority
@@ -66,15 +73,15 @@ export async function managerApproveRoutes(app: FastifyInstance) {
         approverRoles = ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
       }
     } else {
-      approverRoles = ['MANAGER', 'MANAGER_ADMIN', 'SUPER_ADMIN']
+      approverRoles = ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
     }
 
     const where: any = {
       role:      { in: approverRoles },
-      isActive:  true,
+      status:    'ACTIVE',
       deletedAt: null,
     }
-    if (!isUserMgmt) {
+    if (!isAdminOnly) {
       where.channelId = channelId
     }
 

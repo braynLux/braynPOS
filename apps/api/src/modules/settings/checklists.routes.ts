@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 export const checklistRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  const isGlobalRole = (role: string) => ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(role)
 
   // GET /settings/checklists
   app.get('/checklists', {
@@ -35,6 +36,9 @@ export const checklistRoutes: FastifyPluginAsync = async (app) => {
     })
 
     const body = schema.parse(request.body)
+    if (!isGlobalRole(request.user.role) && body.channelId !== request.user.channelId) {
+      throw { statusCode: 403, message: 'You can only create checklists for your assigned channel' }
+    }
     const checklist = await prisma.serviceChecklist.create({
       data: {
         name:      body.name,
@@ -50,6 +54,15 @@ export const checklistRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
+    if (!isGlobalRole(request.user.role)) {
+      const checklist = await prisma.serviceChecklist.findUnique({
+        where:  { id },
+        select: { channelId: true },
+      })
+      if (!checklist || checklist.channelId !== request.user.channelId) {
+        throw { statusCode: 404, message: 'Checklist not found' }
+      }
+    }
     return prisma.serviceChecklist.delete({ where: { id } })
   })
 }

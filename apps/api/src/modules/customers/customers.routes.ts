@@ -7,6 +7,8 @@ import { prisma }                  from '../../lib/prisma.js'
 import { validateApprovalToken }   from '../auth/manager-approve.routes.js'
 import { z }                       from 'zod'
 
+const HQ_CUSTOMER_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
@@ -16,24 +18,29 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER',
+      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request) => {
-    const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)
+    const isHQ = HQ_CUSTOMER_ROLES.includes(request.user.role)
 
     const query = z.object({
       page:   z.coerce.number().min(1).optional(),
       limit:  z.coerce.number().min(1).max(100).optional(),
       search: z.string().optional(),
       tier:   z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
+      channelId: z.string().uuid().optional(),
     }).parse(request.query)
+
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
 
     return customersService.findAll({
       ...query,
       // FIX 10: Pass undefined (not empty string) for HQ — empty string
       // produces WHERE channelId = '' which matches no records.
-      channelId: isHQ ? undefined : (request.user.channelId || undefined),
+      channelId: isHQ ? query.channelId : request.user.channelId!,
     })
   })
 
@@ -42,12 +49,16 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:id', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER',
+      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const isHQ   = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)
+    const isHQ   = HQ_CUSTOMER_ROLES.includes(request.user.role)
+
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
 
     const customer = await customersService.findById(
       id,
@@ -65,21 +76,28 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.post('/', {
     config:     RATE.APPROVAL,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER',
+      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request, reply) => {
+    const isHQ = HQ_CUSTOMER_ROLES.includes(request.user.role)
     const body = z.object({
       name:        z.string().min(1),
       phone:       z.string().min(10).max(13).regex(/^[+0-9]+$/, 'Invalid phone number format'),
       email:       z.string().email().optional(),
       tier:        z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
-      creditLimit: z.number().min(0).optional(),
+      creditLimit: z.coerce.number().min(0).optional(),
+      channelId:   z.string().uuid().optional(),
     }).parse(request.body)
+
+    const channelId = isHQ ? (body.channelId || request.user.channelId) : request.user.channelId
+    if (!channelId) {
+      throw { statusCode: 400, message: 'channelId is required to create a customer' }
+    }
 
     const customer = await customersService.create({
       ...body,
-      channelId: request.user.channelId,
+      channelId,
     })
     reply.status(201).send(customer)
   })
@@ -88,19 +106,23 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id', {
     config:     RATE.APPROVAL,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER',
+      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request) => {
     const { id } = request.params as { id: string }
-    const isHQ   = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)
+    const isHQ   = HQ_CUSTOMER_ROLES.includes(request.user.role)
+
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
 
     const body = z.object({
       name:        z.string().optional(),
       phone:       z.string().min(10).max(13).regex(/^[+0-9]+$/).optional(),
       email:       z.string().email().optional(),
       tier:        z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
-      creditLimit: z.number().min(0).optional(),
+      creditLimit: z.coerce.number().min(0).optional(),
     }).parse(request.body)
 
     // FIX 10: Pass undefined (not '') for HQ users.
@@ -119,16 +141,19 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', {
     config:     RATE.APPROVAL,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER',
+      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON',
     )],
   }, async (request, reply) => {
     const { id }    = request.params as { id: string }
     const actor     = request.user
-    const isHQ      = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(actor.role)
+    const isHQ      = HQ_CUSTOMER_ROLES.includes(actor.role)
     const { approvalToken } = z.object({ approvalToken: z.string().optional() }).parse(request.body || {})
 
     if (!isHQ) {
+      if (!actor.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (!approvalToken) {
         const approval = await (prisma as any).managerApproval.create({
           data: {

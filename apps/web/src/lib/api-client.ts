@@ -2,7 +2,7 @@ const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://api-production-f72
 if (!process.env.NEXT_PUBLIC_API_URL && process.env.NODE_ENV === 'production') {
   console.warn('[INFO] Using production fallback for API URL.')
 }
-const API_BASE = rawApiUrl + '/v1'
+const API_BASE = `${rawApiUrl.replace(/\/+$/, '').replace(/\/api\/v1$/, '').replace(/\/v1$/, '')}/v1`
 
 interface FetchOptions extends RequestInit {
   token?: string
@@ -13,9 +13,17 @@ let refreshPromise: Promise<any> | null = null
 
 export class ApiError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  statusCode: number
+  code?: string
+  data?: unknown
+  [key: string]: unknown
+  constructor(message: string, status: number, code?: string, data?: unknown, details?: Record<string, unknown>) {
     super(message)
     this.status = status
+    this.statusCode = status
+    this.code = code
+    this.data = data
+    if (details) Object.assign(this, details)
     this.name = 'ApiError'
   }
 }
@@ -79,7 +87,7 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
   }
 
   if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({ message: res.statusText }))
+    const errorBody = await res.json().catch(() => ({ message: res.statusText })) as Record<string, unknown>
     const errorMessage = errorBody.message || errorBody.error || `API Error: ${res.status}`
     
     // Log specialized warning for multi-tenancy blocks
@@ -89,7 +97,13 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
       console.error(`[api] Request to ${path} failed (${res.status}):`, errorMessage)
     }
 
-    throw new ApiError(errorMessage, res.status)
+    throw new ApiError(
+      String(errorMessage),
+      res.status,
+      typeof errorBody.code === 'string' ? errorBody.code : undefined,
+      errorBody.data,
+      errorBody
+    )
   }
 
   // Handle 204 No Content or empty responses

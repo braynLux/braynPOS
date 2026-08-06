@@ -6,13 +6,15 @@ import { RATE }         from '../../lib/rate-limit.plugin.js'
 import { prisma }       from '../../lib/prisma.js'
 import { z }            from 'zod'
 
+const HQ_CREDIT_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 export const creditRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // GET /credit/status/:customerId
   app.get('/status/:customerId', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
   }, async (request, reply) => {
     const { customerId } = request.params as { customerId: string }
 
@@ -20,7 +22,10 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
     // the role is not SUPER_ADMIN/MANAGER_ADMIN. Previously CASHIER and
     // SALES_PERSON could look up credit details for customers from any
     // channel — outstandingCredit, creditLimit, all recent sales included.
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!HQ_CREDIT_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       const customer = await prisma.customer.findUnique({
         where:  { id: customerId },
         select: { channelId: true },
@@ -42,11 +47,14 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
   // GET /credit/outstanding/:customerId
   app.get('/outstanding/:customerId', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
   }, async (request, reply) => {
     const { customerId } = request.params as { customerId: string }
 
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!HQ_CREDIT_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       const customer = await prisma.customer.findUnique({
         where:  { id: customerId },
         select: { channelId: true },
@@ -87,18 +95,21 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
   // POST /credit/repay
   app.post('/repay', {
     config:     RATE.SALE_COMMIT,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
   }, async (request, reply) => {
     const body = z.object({
       customerId: z.string().uuid(),
-      amount:     z.number().positive(),
+      amount:     z.coerce.number().positive(),
       method:     z.enum(['CASH', 'MOBILE_MONEY', 'CARD', 'BANK_TRANSFER']),
       reference:  z.string().max(100).optional().nullable(),
       notes:      z.string().max(500).optional().nullable(),
     }).parse(request.body)
 
     // Non-admins can only record repayments for their own channel's customers
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!HQ_CREDIT_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       const customer = await prisma.customer.findUnique({
         where:  { id: body.customerId },
         select: { channelId: true },
@@ -118,12 +129,28 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
   // PATCH /api/v1/credit/adjust-limit
   app.patch('/adjust-limit', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const body = z.object({
       customerId: z.string().uuid(),
-      newLimit:   z.number().min(0),
+      newLimit:   z.coerce.number().min(0),
     }).parse(request.body)
+
+    if (!HQ_CREDIT_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      const customer = await prisma.customer.findUnique({
+        where:  { id: body.customerId },
+        select: { channelId: true },
+      })
+      if (!customer) {
+        throw { statusCode: 404, message: 'Customer not found' }
+      }
+      if (customer.channelId && customer.channelId !== request.user.channelId) {
+        throw { statusCode: 403, message: 'Customer does not belong to your channel' }
+      }
+    }
 
     return adjustCreditLimit(body.customerId, body.newLimit, request.user)
   })

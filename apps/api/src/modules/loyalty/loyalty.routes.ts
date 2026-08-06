@@ -3,9 +3,11 @@ import { loyaltyService } from './loyalty.service.js'
 import { authenticate }   from '../../middleware/authenticate.js'
 import { authorize }      from '../../middleware/authorize.js'
 import { RATE }           from '../../lib/rate-limit.plugin.js'
-import { prisma }         from '../../lib/prisma.js'
+import { basePrisma }     from '../../lib/prisma.js'
 import { z }              from 'zod'
 import type { UserRole }  from '@prisma/client'
+
+const HQ_LOYALTY_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const loyaltyRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -19,6 +21,7 @@ export const loyaltyRoutes: FastifyPluginAsync = async (app) => {
     config:     RATE.READ,
     preHandler: [authorize(
       'SUPER_ADMIN' as UserRole, 'MANAGER_ADMIN' as UserRole,
+      'ADMIN'       as UserRole,
       'MANAGER'     as UserRole, 'CASHIER'       as UserRole,
       'SALES_PERSON' as UserRole,
     )],
@@ -30,8 +33,12 @@ export const loyaltyRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.query)
 
     // Non-admin roles may only view loyalty history for their channel's customers
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      const customer = await prisma.customer.findUnique({
+    if (!HQ_LOYALTY_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+
+      const customer = await basePrisma.customer.findUnique({
         where:  { id: customerId },
         select: { channelId: true },
       })
@@ -57,6 +64,7 @@ export const loyaltyRoutes: FastifyPluginAsync = async (app) => {
     config:     RATE.SALE_COMMIT,
     preHandler: [authorize(
       'SUPER_ADMIN' as UserRole, 'MANAGER_ADMIN' as UserRole,
+      'ADMIN'       as UserRole,
       'MANAGER'     as UserRole, 'CASHIER'       as UserRole,
     )],
   }, async (request, reply) => {
@@ -66,8 +74,12 @@ export const loyaltyRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.body)
 
     // Non-admin roles may only redeem points for their channel's customers
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      const customer = await prisma.customer.findUnique({
+    if (!HQ_LOYALTY_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+
+      const customer = await basePrisma.customer.findUnique({
         where:  { id: customerId },
         select: { channelId: true },
       })

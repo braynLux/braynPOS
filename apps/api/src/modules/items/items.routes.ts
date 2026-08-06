@@ -16,6 +16,8 @@ import { logAction, AUDIT }       from '../../lib/audit.js'
 import '@fastify/multipart'
 import { MultipartFile } from '@fastify/multipart'
 
+const HQ_ITEM_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 export const itemsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
@@ -30,8 +32,11 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     const query = listItemsQuery.parse(request.query)
     // Removed debug log for query
     
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
-      query.channelId = request.user.channelId || undefined
+    if (!HQ_ITEM_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      query.channelId = request.user.channelId
     }
     return itemsService.findAll(query, request.user.role)
   })
@@ -43,6 +48,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
   }, async (request) => {
     const body = request.body as Record<string, any>
     const { settingsService } = await import('../dashboard/settings.service.js')
+    if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     // FIX 2: use .sub consistently — .id and .sub are both userId but .sub is canonical
     return settingsService.bulkUpdate(body, request.user.sub, request.user.channelId ?? null)
   })
@@ -59,6 +67,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     )],
   }, async (request) => {
     const { id } = request.params as { id: string }
+    if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     return itemsService.findById(id, request.user.role, request.user.channelId ?? undefined)
   })
 
@@ -72,9 +83,12 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     )],
   }, async (request) => {
     const { barcode } = request.params as { barcode: string }
+    if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     const item = await itemsService.findByBarcode(barcode)
     if (!item) throw { statusCode: 404, message: 'Item not found' }
-    return item
+    return itemsService.findById(item.id, request.user.role, request.user.channelId ?? undefined)
   })
 
   // POST /items
@@ -87,6 +101,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     }).passthrough().parse(request.body)
 
     const body = createItemSchema.parse(rest)
+    if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
 
     const sanitizedBody = {
       ...body,
@@ -111,6 +128,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
   }, async (request) => {
     const { id } = request.params as { id: string }
     const body   = updateItemSchema.parse(request.body)
+    if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
 
     const sanitizedBody = {
       ...body,
@@ -137,6 +157,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.body || {})
 
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (!approvalToken) {
         const approval = await prisma.managerApproval.create({
           data: {
@@ -171,6 +194,13 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request) => {
     const body = stockAdjustmentSchema.parse(request.body)
+    const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+    if (!isHQ && body.channelId !== request.user.channelId) {
+      throw { statusCode: 403, message: 'You can only adjust stock for your assigned channel' }
+    }
 
     const item       = await prisma.item.findUniqueOrThrow({ where: { id: body.itemId } })
     if (item.type === 'SERVICE') {
@@ -287,6 +317,14 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     })
 
     const body = schema.parse(request.body)
+    const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+    if (!isHQ && body.allocations.some(a => a.channelId !== request.user.channelId)) {
+      throw { statusCode: 403, message: 'You can only allocate opening stock for your assigned channel' }
+    }
+
     const item = await prisma.item.findUniqueOrThrow({ where: { id: body.itemId } })
     if (item.type === 'SERVICE') {
       throw { statusCode: 400, message: 'Bulk opening stock is not allowed for Service items' }
@@ -300,8 +338,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Brands ──────────────────────────────────────────────────────────
   app.get('/brands', { config: RATE.READ }, async (request) => {
-    const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
-    return itemsService.findAllBrands(isHQ ? undefined : (request.user.channelId || undefined))
+    const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    return itemsService.findAllBrands(isHQ ? undefined : request.user.channelId!)
   })
 
   app.post('/brands', {
@@ -309,6 +348,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { name } = z.object({ name: z.string().min(1) }).parse(request.body)
+    if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     const brand = await itemsService.createBrand(name, request.user.channelId || undefined)
     reply.status(201).send(brand)
   })
@@ -318,9 +360,10 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
-    const isHQ   = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
+    const isHQ   = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
     const { name } = z.object({ name: z.string().min(1) }).parse(request.body)
-    return itemsService.updateBrand(id, isHQ ? '' : (request.user.channelId || ''), name)
+    return itemsService.updateBrand(id, isHQ ? undefined : request.user.channelId!, name)
   })
 
   app.delete('/brands/:id', {
@@ -328,14 +371,16 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
-    const isHQ   = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
-    return itemsService.softDeleteBrand(id, isHQ ? '' : (request.user.channelId || ''))
+    const isHQ   = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    return itemsService.softDeleteBrand(id, isHQ ? undefined : request.user.channelId!)
   })
 
   // ── Categories ───────────────────────────────────────────────────────
   app.get('/categories', { config: RATE.READ }, async (request) => {
-    const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
-    return itemsService.findAllCategories(isHQ ? undefined : (request.user.channelId || undefined))
+    const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    return itemsService.findAllCategories(isHQ ? undefined : request.user.channelId!)
   })
 
   app.post('/categories', {
@@ -346,6 +391,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
       name:     z.string().min(1),
       parentId: z.string().optional(),
     }).parse(request.body)
+    if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     try {
       const category = await itemsService.createCategory(name, request.user.channelId || undefined, parentId)
       reply.status(201).send(category)
@@ -366,9 +414,10 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
       name:     z.string().min(1),
       parentId: z.string().optional().nullable(),
     }).parse(request.body)
-    const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
+    const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
     try {
-      return itemsService.updateCategory(id, isHQ ? '' : (request.user.channelId || ''), name, parentId)
+      return itemsService.updateCategory(id, isHQ ? undefined : request.user.channelId!, name, parentId)
     } catch (err: unknown) {
       if ((err as any)?.code === 'P2002') {
         return reply.status(409).send({ error: `A category named "${name}" already exists.` })
@@ -382,14 +431,16 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
-    const isHQ   = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
-    return itemsService.softDeleteCategory(id, isHQ ? '' : (request.user.channelId || ''))
+    const isHQ   = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    return itemsService.softDeleteCategory(id, isHQ ? undefined : request.user.channelId!)
   })
 
   // ── Suppliers ────────────────────────────────────────────────────────
   app.get('/suppliers', { config: RATE.READ }, async (request) => {
-    const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
-    return itemsService.findAllSuppliers(isHQ ? undefined : (request.user.channelId || undefined))
+    const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    return itemsService.findAllSuppliers(isHQ ? undefined : request.user.channelId!)
   })
 
   app.post('/suppliers', {
@@ -405,6 +456,9 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
       taxPin:       z.string().optional(),
       paymentTerms: z.string().optional(),
     }).parse(request.body)
+    if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     const supplier = await itemsService.createSupplier({ ...body, channelId: request.user.channelId || undefined })
     reply.status(201).send(supplier)
   })
@@ -414,7 +468,8 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
-    const isHQ   = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
+    const isHQ   = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
     const body   = z.object({
       name:         z.string().min(1).optional(),
       contactName:  z.string().optional(),
@@ -424,7 +479,7 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
       taxPin:       z.string().optional(),
       paymentTerms: z.string().optional(),
     }).parse(request.body)
-    return itemsService.updateSupplier(id, isHQ ? '' : (request.user.channelId || ''), body)
+    return itemsService.updateSupplier(id, isHQ ? undefined : request.user.channelId!, body)
   })
 
   app.delete('/suppliers/:id', {
@@ -432,10 +487,11 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
-    const isHQ   = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
+    const isHQ   = HQ_ITEM_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
     return itemsService.updateSupplier(
       id,
-      isHQ ? '' : (request.user.channelId || ''),
+      isHQ ? undefined : request.user.channelId!,
       { deletedAt: new Date() } as never
     )
   })
@@ -443,7 +499,7 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
   // POST /items/import
   app.post('/import', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')],
   }, async (request) => {
     const data = await request.file()
     if (!data || !data.file) throw { statusCode: 400, message: 'CSV file required' }

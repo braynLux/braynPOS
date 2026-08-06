@@ -11,6 +11,17 @@ export class LpoService {
     expectedDate?: string
   }) {
     const orderNo = `LPO-${Date.now()}`
+
+    const supplier = await prisma.supplier.findUnique({
+      where:  { id: data.supplierId },
+      select: { channelId: true, deletedAt: true },
+    })
+    if (!supplier || supplier.deletedAt) {
+      throw { statusCode: 404, message: 'Supplier not found' }
+    }
+    if (supplier.channelId && supplier.channelId !== data.channelId) {
+      throw { statusCode: 403, message: 'Supplier does not belong to the LPO channel' }
+    }
  
     return prisma.purchaseOrder.create({
       data: {
@@ -65,16 +76,22 @@ export class LpoService {
     })
   }
  
-  async send(id: string, channelId: string) {
-    await this.findById(id, channelId)
+  async send(id: string, channelId?: string) {
+    const order = await this.findById(id, channelId)
+    if (order.status !== 'DRAFT') {
+      throw { statusCode: 400, message: `Only draft LPOs can be sent. Current: ${order.status}` }
+    }
     return prisma.purchaseOrder.update({
       where: { id },
       data: { status: 'SENT' },
     })
   }
  
-  async cancel(id: string, channelId: string) {
-    await this.findById(id, channelId)
+  async cancel(id: string, channelId?: string) {
+    const order = await this.findById(id, channelId)
+    if (['FULFILLED', 'CANCELLED'].includes(order.status)) {
+      throw { statusCode: 400, message: `Cannot cancel a ${order.status.toLowerCase()} LPO` }
+    }
     return prisma.purchaseOrder.update({
       where: { id },
       data: { status: 'CANCELLED' },

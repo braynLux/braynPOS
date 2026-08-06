@@ -21,10 +21,11 @@ export class SerialsService {
     }
  
     // Role-based filtering
-    if (!['SUPER_ADMIN', 'MANAGER'].includes(requestingUser.role)) {
-      if (requestingUser.channelId) {
-        where.channelId = requestingUser.channelId
+    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(requestingUser.role)) {
+      if (!requestingUser.channelId) {
+        throw { statusCode: 400, message: 'User is not assigned to a channel' }
       }
+      where.channelId = requestingUser.channelId
     }
  
     return prisma.serial.findMany({
@@ -42,10 +43,11 @@ export class SerialsService {
     const where: any = { serialNo }
     
     // If not admin/super_admin, restrict to user's channel if they have one
-    if (requestingUser && !['SUPER_ADMIN', 'MANAGER'].includes(requestingUser.role)) {
-      if (requestingUser.channelId) {
-        where.channelId = requestingUser.channelId
+    if (requestingUser && !['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(requestingUser.role)) {
+      if (!requestingUser.channelId) {
+        throw { statusCode: 400, message: 'User is not assigned to a channel' }
       }
+      where.channelId = requestingUser.channelId
     }
  
     return prisma.serial.findFirst({
@@ -93,7 +95,14 @@ export class SerialsService {
     })
   }
  
-  async writeOff(id: string) {
+  async writeOff(id: string, channelId?: string) {
+    const serial = await prisma.serial.findFirst({
+      where: { id, ...(channelId && { channelId }) },
+      select: { id: true },
+    })
+    if (!serial) {
+      throw { statusCode: 404, message: 'Serial not found' }
+    }
     return prisma.serial.update({
       where: { id },
       data: { status: 'WRITTEN_OFF' },

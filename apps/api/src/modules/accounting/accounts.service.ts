@@ -1,9 +1,16 @@
 import { prisma } from '../../lib/prisma.js'
-import type { Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 
 export class AccountsService {
   // FIX 1 + 2: Recursive CTE — handles unlimited depth, filters inactive
-  async getChartOfAccounts() {
+  async getChartOfAccounts(channelId?: string) {
+    const rootChannelFilter = channelId
+      ? Prisma.sql`AND ("channelId" = ${channelId} OR "channelId" IS NULL)`
+      : Prisma.sql``
+    const childChannelFilter = channelId
+      ? Prisma.sql`AND (a."channelId" = ${channelId} OR a."channelId" IS NULL)`
+      : Prisma.sql``
+
     const rows = await prisma.$queryRaw<Array<{
       id:       string
       code:     string
@@ -22,6 +29,7 @@ export class AccountsService {
         FROM accounts
         WHERE "parentId" IS NULL
           AND "isActive"  = true
+          ${rootChannelFilter}
 
         UNION ALL
 
@@ -32,6 +40,7 @@ export class AccountsService {
         FROM accounts a
         JOIN account_tree at ON at.id = a."parentId"
         WHERE a."isActive" = true
+          ${childChannelFilter}
       )
       SELECT * FROM account_tree
       ORDER BY code
@@ -68,14 +77,16 @@ export class AccountsService {
     })
   }
 
-  async findById(id: string) {
-    return prisma.account.findUniqueOrThrow({
-      where:   { id },
+  async findById(id: string, channelId?: string) {
+    const account = await prisma.account.findFirst({
+      where:   { id, ...(channelId && { OR: [{ channelId }, { channelId: null }] }) },
       include: {
         parent:   { select: { id: true, code: true, name: true } },
         children: { select: { id: true, code: true, name: true } },
       },
     })
+    if (!account) throw { statusCode: 404, message: 'Account not found' }
+    return account
   }
 
   async create(data: {

@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify'
-import { prisma }        from '../../lib/prisma.js'
+import { basePrisma, prisma } from '../../lib/prisma.js'
 import { Prisma }        from '@prisma/client'
 import { authenticate }  from '../../middleware/authenticate.js'
 import { authorize }     from '../../middleware/authorize.js'
@@ -40,13 +40,17 @@ export class TaxConnectorService {
   }
 
   async syncInvoice(saleId: string, actorChannelId?: string | null, actorRole?: string) {
-    const sale = await prisma.sale.findUniqueOrThrow({
+    const isGlobalRole = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actorRole ?? '')
+    if (!isGlobalRole && !actorChannelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+
+    const sale = await basePrisma.sale.findUniqueOrThrow({
       where:   { id: saleId },
       include: { items: { include: { item: true } } },
     })
 
-    const isGlobalRole = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actorRole ?? '')
-    if (!isGlobalRole && actorChannelId && sale.channelId !== actorChannelId) {
+    if (!isGlobalRole && sale.channelId !== actorChannelId) {
       throw { statusCode: 403, message: 'You can only sync invoices from your own channel' }
     }
 
@@ -73,13 +77,14 @@ export const taxRoutes: FastifyPluginAsync = async (app) => {
   // FIX 7: Added RATE.READ
   app.get('/config', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request, reply) => {
-    const channelId = request.user.channelId
+    const q = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
+    const channelId = q.channelId || request.user.channelId
     if (!channelId) {
       return reply.status(400).send({
         error:   'channelId required',
-        message: 'SUPER_ADMIN must pass channelId as a query parameter',
+        message: 'channelId is required for admin tax config',
       })
     }
     return taxConnectorService.getConfig(channelId)
@@ -91,11 +96,12 @@ export const taxRoutes: FastifyPluginAsync = async (app) => {
     config:     RATE.APPROVAL,
     preHandler: [authorize('SUPER_ADMIN')],
   }, async (request, reply) => {
-    const channelId = request.user.channelId
+    const q = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
+    const channelId = q.channelId || request.user.channelId
     if (!channelId) {
       return reply.status(400).send({
         error:   'channelId required',
-        message: 'SUPER_ADMIN must have a channel assigned or pass channelId',
+        message: 'channelId is required for admin tax config',
       })
     }
 
@@ -114,9 +120,9 @@ export const taxRoutes: FastifyPluginAsync = async (app) => {
   // FIX 7: Added RATE.APPROVAL — triggers external API call per invocation
   app.post('/sync/:saleId', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
-    const { saleId } = request.params as { saleId: string }
+    const { saleId } = z.object({ saleId: z.string().uuid() }).parse(request.params)
     return taxConnectorService.syncInvoice(saleId, request.user.channelId, request.user.role)
   })
 }

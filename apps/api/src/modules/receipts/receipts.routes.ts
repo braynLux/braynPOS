@@ -16,7 +16,7 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:saleId', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER',
+      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request, reply) => {
@@ -48,7 +48,7 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
 
     // FIX 1: Channel scoping — non-admin roles may only retrieve receipts
     // for sales from their own channel
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
       if (sale.channelId !== request.user.channelId) {
         return reply.status(403).send({
           error:   'Forbidden',

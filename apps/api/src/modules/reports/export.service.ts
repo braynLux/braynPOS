@@ -26,7 +26,7 @@ export class ExportService {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: 'Sheet1!A1',
-      valueInputOption: 'USER_ENTERED',
+      valueInputOption: 'RAW',
       requestBody: { values: rows },
     })
 

@@ -1,5 +1,4 @@
-import { prisma } from '../../lib/prisma.js'
-import { StockTakeStatus } from '@prisma/client'
+import { basePrisma, prisma } from '../../lib/prisma.js'
 
 export class StockTakeService {
   async start(channelId: string, startedBy: string) {
@@ -39,10 +38,14 @@ export class StockTakeService {
     }
 
     const item = await prisma.stockTakeItem.findFirst({
-      where: { stockTakeId, itemId }
+      where: { stockTakeId, itemId },
+      include: { stockTake: { select: { status: true } } },
     })
 
     if (!item) throw { statusCode: 404, message: 'Item not found in this stock take' }
+    if (item.stockTake.status !== 'OPEN') {
+      throw { statusCode: 400, message: 'Cannot record counts on a closed stock take' }
+    }
 
     // Always recompute discrepancy here — never trust a stale DB value
     const discrepancy = recordedQty - item.expectedQty
@@ -121,7 +124,7 @@ export class StockTakeService {
   }
 
   async getTakeDetails(id: string, userRole: string) {
-    const take = await prisma.stockTake.findUniqueOrThrow({
+    const take = await basePrisma.stockTake.findUniqueOrThrow({
       where: { id },
       include: {
         items: {

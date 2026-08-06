@@ -17,6 +17,11 @@ interface Supplier {
   name: string
 }
 
+interface Channel {
+  id: string
+  name: string
+}
+
 interface LPOLine {
   id: string
   itemId: string
@@ -32,18 +37,31 @@ export default function NewLPOPage() {
   const user = useAuthStore((s) => s.user)
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState('')
   const [selectedSupplierId, setSelectedSupplierId] = useState('')
   const [lines, setLines] = useState<LPOLine[]>([])
   const [notes, setNotes] = useState('')
   const [expectedDate, setExpectedDate] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const canChooseChannel = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
 
   useEffect(() => {
     if (!token) return
-    api.get<Supplier[]>('/items/suppliers', token)
-      .then(setSuppliers)
+    Promise.all([
+      api.get<Supplier[]>('/items/suppliers', token),
+      canChooseChannel ? api.get<Channel[]>('/channels', token) : Promise.resolve([]),
+    ])
+      .then(([supplierList, channelList]) => {
+        setSuppliers(supplierList)
+        setChannels(channelList)
+        if (!selectedChannelId) {
+          const defaultChannel = user?.channelId || channelList[0]?.id || ''
+          if (defaultChannel) setSelectedChannelId(defaultChannel)
+        }
+      })
       .catch(console.error)
-  }, [token])
+  }, [token, canChooseChannel, selectedChannelId, user?.channelId])
 
   const addLine = () => {
     setLines([...lines, { 
@@ -85,6 +103,8 @@ export default function NewLPOPage() {
     if (!token || !user) return
     if (!selectedSupplierId) return toast.error('Please select a supplier')
     if (lines.length === 0) return toast.error('Add at least one item')
+    const channelId = canChooseChannel ? selectedChannelId : user.channelId
+    if (!channelId) return toast.error('Please select a channel')
     
     for (const line of lines) {
       if (!line.itemId) return toast.error('Please select an item for all lines')
@@ -95,7 +115,7 @@ export default function NewLPOPage() {
     try {
       await api.post('/purchases/lpo', {
         supplierId: selectedSupplierId,
-        channelId: user.channelId,
+        channelId,
         notes,
         ...(expectedDate && { expectedDate: new Date(expectedDate).toISOString() }),
         lines: lines.map(l => ({
@@ -137,6 +157,21 @@ export default function NewLPOPage() {
           <div className="card">
             <h3 style={{ marginBottom: 16 }}>Order Details</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {canChooseChannel && (
+                <div className="form-group">
+                  <label>Channel</label>
+                  <select
+                    className="input"
+                    value={selectedChannelId}
+                    onChange={(e) => setSelectedChannelId(e.target.value)}
+                  >
+                    <option value="">Select Channel</option>
+                    {channels.map(channel => (
+                      <option key={channel.id} value={channel.id}>{channel.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="form-group">
                 <label>Supplier</label>
                 <select 
@@ -229,7 +264,7 @@ export default function NewLPOPage() {
 
               {lines.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-muted)' }}>
-                  No items added yet. Click "+ Add Item" to begin.
+                  No items added yet. Click &quot;+ Add Item&quot; to begin.
                 </div>
               )}
             </div>

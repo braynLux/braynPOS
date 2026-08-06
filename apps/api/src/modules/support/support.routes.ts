@@ -5,19 +5,24 @@ import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
 import { SupportCategory, TicketPriority, TicketStatus } from '@prisma/client'
 
+const GLOBAL_SUPPORT_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 export const supportRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // POST /support/tickets — Create a new ticket (Managers)
   app.post('/tickets', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
       subject: z.string().min(1).max(200),
       category: z.nativeEnum(SupportCategory),
       priority: z.nativeEnum(TicketPriority),
-      content: z.string().min(1),
+      content: z.string().min(1).max(5000),
     }).parse(request.body)
+    if (!GLOBAL_SUPPORT_ROLES.includes(request.user.role) && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
 
     const ticket = await supportService.createTicket(request.user.sub, {
       ...body,
@@ -28,7 +33,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /support/tickets — List tickets (Filters for Admins vs Managers)
   app.get('/tickets', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       status: z.nativeEnum(TicketStatus).optional(),
@@ -37,15 +42,18 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.query)
 
     const baseFilters: any = { ...query }
+    if (GLOBAL_SUPPORT_ROLES.includes(request.user.role)) {
+      return supportService.getTickets(baseFilters)
+    }
+
     let creatorRole: any = undefined
     let channelId: string | undefined = undefined
 
     // Hierarchy logic for which OTHER tickets can be seen
-    if (request.user.role === 'SUPER_ADMIN') {
-      creatorRole = 'MANAGER_ADMIN'
-    } else if (request.user.role === 'MANAGER_ADMIN') {
-      creatorRole = { in: ['MANAGER', 'CASHIER', 'STOREKEEPER', 'PROMOTER', 'SALES_PERSON', 'MANAGER_ADMIN'] }
-    } else if (request.user.role === 'MANAGER') {
+    if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       channelId = request.user.channelId || undefined
     }
 
@@ -68,13 +76,18 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /support/tickets/:id — Get ticket details
   app.get('/tickets/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
-    const { id } = request.params as { id: string }
-    const ticket = await supportService.getTicketDetails(id)
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
+    const ticket = await supportService.getTicketDetails(
+      id,
+      request.user.sub,
+      request.user.role,
+      request.user.channelId,
+    )
 
     // Security check
-    if (['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (GLOBAL_SUPPORT_ROLES.includes(request.user.role)) {
       // Access granted
     } else if (request.user.role === 'MANAGER') {
       if (ticket.channelId !== request.user.channelId) {
@@ -89,15 +102,20 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /support/tickets/:id/messages — Reply to a ticket
   app.post('/tickets/:id/messages', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
-    const { id } = request.params as { id: string }
-    const { content } = z.object({ content: z.string().min(1) }).parse(request.body)
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
+    const { content } = z.object({ content: z.string().min(1).max(5000) }).parse(request.body)
 
-    const ticket = await supportService.getTicketDetails(id)
+    const ticket = await supportService.getTicketDetails(
+      id,
+      request.user.sub,
+      request.user.role,
+      request.user.channelId,
+    )
 
     // Security check
-    if (['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (GLOBAL_SUPPORT_ROLES.includes(request.user.role)) {
       // Access granted
     } else if (request.user.role === 'MANAGER') {
       if (ticket.channelId !== request.user.channelId) {
@@ -107,30 +125,40 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
       throw { statusCode: 403, message: 'You do not have permission to reply to this ticket' }
     }
 
-    const message = await supportService.handleUserMessage(id, request.user.sub, content, (chunk) => {
-      // Stream AI response if needed (future implementation with socket.io)
-    })
+    const message = await supportService.handleUserMessage(
+      id,
+      request.user.sub,
+      content,
+      () => {},
+      request.user.role,
+      request.user.channelId,
+    )
     reply.status(201).send(message)
   })
 
   // PATCH /support/tickets/:id/status — Update ticket status (Admins only)
   app.patch('/tickets/:id/status', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
-    const { id } = request.params as { id: string }
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const { status } = z.object({ status: z.nativeEnum(TicketStatus) }).parse(request.body)
     return supportService.updateTicketStatus(id, status)
   })
 
   // DELETE /support/tickets/:id — Delete a ticket (if Resolved/Closed)
   app.delete('/tickets/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
-    const { id } = request.params as { id: string }
-    const ticket = await supportService.getTicketDetails(id)
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
+    const ticket = await supportService.getTicketDetails(
+      id,
+      request.user.sub,
+      request.user.role,
+      request.user.channelId,
+    )
 
     // Security check (same as GET)
-    if (['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (GLOBAL_SUPPORT_ROLES.includes(request.user.role)) {
       // Access granted
     } else if (request.user.role === 'MANAGER') {
       if (ticket.channelId !== request.user.channelId) {
@@ -146,9 +174,9 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /support/ai-portal/chat — Direct chat with BraynAI (No ticket)
   app.post('/ai-portal/chat', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'ADMIN')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
-    const { message } = z.object({ message: z.string().min(1) }).parse(request.body)
+    const { message } = z.object({ message: z.string().min(1).max(5000) }).parse(request.body)
     
     // We return the full string for consistency with the support chat session logic.
     const fullReply = await supportService.handleStandaloneChat(

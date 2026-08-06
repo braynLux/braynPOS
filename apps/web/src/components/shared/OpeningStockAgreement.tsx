@@ -46,7 +46,7 @@ export function OpeningStockAgreement({ onAgree, isAgreed }: OpeningStockAgreeme
           <h4 style={{ margin: '0 0 4px 0', fontSize: '1rem' }}>📥 Opening Stock Window Open</h4>
           <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
             The administrator has opened the global window for adding **Opening Stock**. 
-            Adding items as "Opening Stock" will initialize inventory levels **without generating a financial transaction (Purchase/Expense)**. 
+            Adding items as &quot;Opening Stock&quot; will initialize inventory levels **without generating a financial transaction (Purchase/Expense)**. 
             This should only be used for existing items currently in your store.
           </p>
         </div>

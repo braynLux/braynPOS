@@ -49,6 +49,10 @@ export class ItemsService {
       } else { where.supplierId = query.supplierId }
     }
 
+    if (query.channelId) {
+      where.inventoryBalances = { some: { channelId: query.channelId } }
+    }
+
     const buildOrderBy = () => {
       const order = (query.sortOrder || 'asc').toLowerCase() as 'asc' | 'desc'
       const field = query.sortBy || 'name'
@@ -431,13 +435,13 @@ export class ItemsService {
     }
   }
 
-  async updateBrand(id: string, channelId: string, name: string) {
-    await prisma.brand.findFirstOrThrow({ where: { id, channelId } })
+  async updateBrand(id: string, channelId: string | undefined, name: string) {
+    await prisma.brand.findFirstOrThrow({ where: { id, ...(channelId && { channelId }) } })
     return prisma.brand.update({ where: { id }, data: { name } })
   }
 
-  async softDeleteBrand(id: string, channelId: string) {
-    await prisma.brand.findFirstOrThrow({ where: { id, channelId } })
+  async softDeleteBrand(id: string, channelId: string | undefined) {
+    await prisma.brand.findFirstOrThrow({ where: { id, ...(channelId && { channelId }) } })
     return prisma.brand.update({ where: { id }, data: { deletedAt: new Date() } })
   }
 
@@ -485,13 +489,13 @@ export class ItemsService {
     }
   }
 
-  async updateCategory(id: string, channelId: string, name: string, parentId?: string | null) {
-    await prisma.category.findFirstOrThrow({ where: { id, channelId } })
+  async updateCategory(id: string, channelId: string | undefined, name: string, parentId?: string | null) {
+    await prisma.category.findFirstOrThrow({ where: { id, ...(channelId && { channelId }) } })
     return prisma.category.update({ where: { id }, data: { name, parentId: parentId ?? null } })
   }
 
-  async softDeleteCategory(id: string, channelId: string) {
-    await prisma.category.findFirstOrThrow({ where: { id, channelId } })
+  async softDeleteCategory(id: string, channelId: string | undefined) {
+    await prisma.category.findFirstOrThrow({ where: { id, ...(channelId && { channelId }) } })
     return prisma.category.update({ where: { id }, data: { deletedAt: new Date() } })
   }
 
@@ -529,8 +533,8 @@ export class ItemsService {
     }
   }
 
-  async updateSupplier(id: string, channelId: string, data: Prisma.SupplierUpdateInput) {
-    await prisma.supplier.findFirstOrThrow({ where: { id, channelId } })
+  async updateSupplier(id: string, channelId: string | undefined, data: Prisma.SupplierUpdateInput) {
+    await prisma.supplier.findFirstOrThrow({ where: { id, ...(channelId && { channelId }) } })
     return prisma.supplier.update({ where: { id }, data })
   }
 

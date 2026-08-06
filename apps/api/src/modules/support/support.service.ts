@@ -23,7 +23,7 @@
 //      redundant operation and simplified to a single ticket delete.
 // ══════════════════════════════════════════════════════════════════════
 
-import { prisma } from '../../lib/prisma.js'
+import { basePrisma, prisma } from '../../lib/prisma.js'
 import { randomBytes } from 'crypto'
 import { SupportCategory, TicketPriority, TicketStatus } from '@prisma/client'
 import { runSupportAgent } from './ai-agent.js'
@@ -77,15 +77,24 @@ export class SupportService {
     ticketId: string,
     senderId: string,
     content:  string,
-    onToken:  (chunk: string) => void
+    onToken:  (chunk: string) => void,
+    actorRole?: string,
+    actorChannel?: string | null
   ) {
-    const ticket = await this.getTicketDetails(ticketId)
+    const ticket = await this.getTicketDetails(ticketId, senderId, actorRole, actorChannel)
+
+    if (['RESOLVED', 'CLOSED'].includes(ticket.status)) {
+      throw {
+        statusCode: 400,
+        message:    'Cannot add messages to a resolved or closed ticket',
+      }
+    }
 
     // FIX 2: Scope dedup check to a 5-second window to handle Socket/HTTP
     // double-sends without silently dropping intentional repeated messages.
     // The original checked content match across all time — too broad.
     const fiveSecondsAgo = new Date(Date.now() - 5000)
-    const recentDuplicate = await prisma.supportMessage.findFirst({
+    let userMessage = await prisma.supportMessage.findFirst({
       where: {
         ticketId,
         sender:    'USER',
@@ -95,14 +104,14 @@ export class SupportService {
       },
     })
 
-    if (!recentDuplicate) {
-      await prisma.supportMessage.create({
+    if (!userMessage) {
+      userMessage = await prisma.supportMessage.create({
         data: { ticketId, sender: 'USER', senderId, content },
       })
     }
 
     // FIX 3: Single clean WAITING_HUMAN check — was duplicated with a cast
-    if (ticket.status === 'WAITING_HUMAN') return
+    if (ticket.status === 'WAITING_HUMAN') return userMessage
 
     const aiReply = await runSupportAgent({
       ticketId,
@@ -151,16 +160,18 @@ export class SupportService {
     limit?:       number
     channelId?:   string
     creatorRole?: string | { in: string[] }
+    OR?:          any[]
   }) {
     const page  = filters.page  ?? 1
     const limit = filters.limit ?? 20
     const skip  = (page - 1) * limit
+    const { creatorRole, ...rawWhere } = filters as any
+    delete rawWhere.page
+    delete rawWhere.limit
 
     const where: any = {
-      ...(filters.userId      && { userId:    filters.userId }),
-      ...(filters.status      && { status:    filters.status }),
-      ...(filters.channelId   && { channelId: filters.channelId }),
-      ...(filters.creatorRole && { user:      { role: filters.creatorRole } }),
+      ...rawWhere,
+      ...(creatorRole && { user: { role: creatorRole } }),
     }
 
     const [data, total] = await Promise.all([
@@ -189,7 +200,7 @@ export class SupportService {
     actorRole?:  string,
     actorChannel?: string | null
   ) {
-    const ticket = await prisma.supportTicket.findUniqueOrThrow({
+    const ticket = await basePrisma.supportTicket.findUniqueOrThrow({
       where:   { id },
       include: {
         messages: { orderBy: { createdAt: 'asc' } },
@@ -202,7 +213,7 @@ export class SupportService {
     if (actorId && actorRole) {
       const isGlobal   = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actorRole)
       const isOwner    = ticket.userId === actorId
-      const sameChannel = ticket.channelId === actorChannel
+      const sameChannel = Boolean(actorChannel && ticket.channelId === actorChannel)
 
       if (!isGlobal && !isOwner && !sameChannel) {
         throw { statusCode: 403, message: 'You do not have access to this ticket' }

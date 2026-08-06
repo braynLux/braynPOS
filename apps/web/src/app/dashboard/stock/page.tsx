@@ -39,7 +39,7 @@ export default function StockPage() {
   const [hasAgreed, setHasAgreed] = useState(false)
   const [globalThreshold, setGlobalThreshold] = useState<number | null>(null)
   
-  const isAdmin = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
+  const isAdmin = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(user?.role || '')
 
   const fetchData = () => {
     if (!token) return
@@ -144,7 +144,7 @@ export default function StockPage() {
             getData={getExportData}
           />
           <Link href="/dashboard/stock/take" className="btn btn-ghost">📊 Physical Counts</Link>
-          {['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '') && (
+          {isAdmin && (
             <select 
               className="input" 
               style={{ width: 140 }} 
@@ -260,8 +260,8 @@ export default function StockPage() {
                       {b.lastMovementAt ? new Date(b.lastMovementAt).toLocaleString() : '—'}
                     </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'STOREKEEPER'].includes(user?.role || '') && (
-                        <button className="btn btn-ghost btn-sm" onClick={() => setAdjustingItem(b)} style={{ marginRight: 4 }}>⚙️ Adjust</button>
+                      {['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER'].includes(user?.role || '') && (
+                        <button className="btn btn-ghost btn-sm" onClick={() => selectedChannel ? setAdjustingItem(b) : toast.error('Select a channel before adjusting stock')} style={{ marginRight: 4 }}>⚙️ Adjust</button>
                       )}
                       {globalWindowActive && hasAgreed && (
                         <button 
@@ -269,7 +269,7 @@ export default function StockPage() {
                           onClick={() => {
                             // This would be replaced with actual initialStock logic
                             // But for now we allow adjustment as opening stock if authorised
-                            setAdjustingItem(b)
+                            selectedChannel ? setAdjustingItem(b) : toast.error('Select a channel before opening stock')
                           }}
                           style={{ color: 'var(--accent)' }}
                         >📥 Opening</button>

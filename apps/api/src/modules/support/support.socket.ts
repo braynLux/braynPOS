@@ -23,6 +23,13 @@ import { verifyToken }    from '../../lib/jwt.js'
 import { prisma }         from '../../lib/prisma.js'
 
 // JWT configuration is handled centrally in lib/jwt.js
+const GLOBAL_TICKET_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
+
+type SocketUser = {
+  sub: string
+  role: string
+  channelId?: string | null
+}
 
 // FIX 3: Contact details from env vars — never hardcode PII in source
 const SUPPORT_PHONE = process.env.SUPPORT_CONTACT_PHONE ?? 'the support team'
@@ -36,6 +43,20 @@ const ESCALATION_MSG =
 // FIX 5: Transient socket message ID — unique enough for client-side dedup
 function socketMsgId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+async function canAccessTicket(ticketId: string, user: SocketUser): Promise<boolean> {
+  const ticket = await prisma.supportTicket.findUnique({
+    where:  { id: ticketId },
+    select: { userId: true, channelId: true },
+  })
+
+  if (!ticket) return false
+  if (GLOBAL_TICKET_ROLES.includes(user.role)) return true
+
+  const isOwner = ticket.userId === user.sub
+  const sameChannel = Boolean(user.channelId && ticket.channelId === user.channelId)
+  return isOwner || sameChannel
 }
 
 export function setupSupportSocket(io: Server) {
@@ -61,29 +82,11 @@ export function setupSupportSocket(io: Server) {
     // FIX 2: Ownership check before joining a ticket room
     socket.on('join_ticket', async (ticketId: string) => {
       try {
-        const user    = socket.data.user
-        const isAdmin = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER']
-          .includes(user.role)
+        const user = socket.data.user as SocketUser
 
-        if (!isAdmin) {
-          // Verify the ticket belongs to this user or their channel
-          const ticket = await prisma.supportTicket.findUnique({
-            where:  { id: ticketId },
-            select: { userId: true, channelId: true },
-          })
-
-          if (!ticket) {
-            socket.emit('error', 'Ticket not found')
-            return
-          }
-
-          const isOwner     = ticket.userId     === user.sub
-          const sameChannel = ticket.channelId  === user.channelId
-
-          if (!isOwner && !sameChannel) {
-            socket.emit('error', 'Access denied to this ticket')
-            return
-          }
+        if (!ticketId || !(await canAccessTicket(ticketId, user))) {
+          socket.emit('error', 'Access denied to this ticket')
+          return
         }
 
         socket.join(`ticket:${ticketId}`)
@@ -94,15 +97,26 @@ export function setupSupportSocket(io: Server) {
     })
 
     // Handle new message from user via socket
-    socket.on('send_message', async ({ ticketId, content }) => {
-      const userId = socket.data.user.sub
+    socket.on('send_message', async (payload) => {
+      const { ticketId, content } = payload || {}
+      const user = socket.data.user as SocketUser
+
+      if (typeof ticketId !== 'string' || typeof content !== 'string' || !content.trim()) {
+        socket.emit('error', 'Invalid support message')
+        return
+      }
+
+      if (!(await canAccessTicket(ticketId, user))) {
+        socket.emit('error', 'Access denied to this ticket')
+        return
+      }
 
       // Emit user message to the room immediately for responsive UI
       supportNamespace.to(`ticket:${ticketId}`).emit('message', {
         id:        socketMsgId(),  // FIX 5
         content,
         sender:    'USER',
-        senderId:  userId,
+        senderId:  user.sub,
         createdAt: new Date(),
       })
 
@@ -110,7 +124,7 @@ export function setupSupportSocket(io: Server) {
       try {
         await supportService.handleUserMessage(
           ticketId,
-          userId,
+          user.sub,
           content,
           (token) => {
             fullAIContent += token
@@ -118,7 +132,9 @@ export function setupSupportSocket(io: Server) {
               ticketId,
               token,
             })
-          }
+          },
+          user.role,
+          user.channelId,
         )
 
         supportNamespace.to(`ticket:${ticketId}`).emit('ai_message_complete', {

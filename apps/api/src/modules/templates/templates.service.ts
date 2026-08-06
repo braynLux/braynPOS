@@ -18,7 +18,7 @@ export class TemplatesService {
     return prisma.documentTemplate.create({ data })
   }
 
-  async update(id: string, channelId: string, data: { name?: string; content?: string; isActive?: boolean }) {
+  async update(id: string, channelId: string | undefined, data: { name?: string; content?: string; isActive?: boolean }) {
     await this.findById(id, channelId)
     return prisma.documentTemplate.update({ where: { id }, data })
   }

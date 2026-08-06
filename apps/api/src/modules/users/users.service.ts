@@ -1,7 +1,7 @@
 import { prisma, type TransactionClient } from '../../lib/prisma.js'
 import { hashPassword } from '../../lib/password.js'
 import { logAction, AUDIT } from '../../lib/audit.js'
-import type { Prisma, UserRole } from '@prisma/client'
+import { Prisma, type UserRole } from '@prisma/client'
 
 const GLOBAL_ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
 
@@ -101,6 +101,9 @@ export class UsersService {
   ) {
     const isGlobalActor = GLOBAL_ADMIN_ROLES.includes(actor.role)
     if (!isGlobalActor) {
+      if (!actor.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       data.channelId = actor.channelId
     }
 
@@ -110,14 +113,24 @@ export class UsersService {
       return await prisma.$transaction(async (tx: TransactionClient) => {
         // FIX 4: Count inside transaction to make the admin cap atomic.
         // Both checks and the create happen in the same serializable unit.
-        if (data.role === 'MANAGER_ADMIN' || data.role === 'ADMIN') {
+        if (data.role === 'SUPER_ADMIN') {
           const count = await tx.user.count({
-            where: { role: { in: ['MANAGER_ADMIN', 'ADMIN'] } },
+            where: { role: 'SUPER_ADMIN', deletedAt: null },
+          })
+          if (count >= 1) {
+            throw {
+              statusCode: 400,
+              message: 'System limit reached: Maximum 1 Super Admin allowed.',
+            }
+          }
+        } else if (data.role === 'MANAGER_ADMIN' || data.role === 'ADMIN') {
+          const count = await tx.user.count({
+            where: { role: data.role, deletedAt: null },
           })
           if (count >= 2) {
             throw {
               statusCode: 400,
-              message: 'System limit reached: Maximum 2 global Administrator Managers allowed.',
+              message: `System limit reached: Maximum 2 ${data.role} users allowed.`,
             }
           }
         }
@@ -162,7 +175,7 @@ export class UsersService {
         if (isEmailConflict || isUsernameConflict) {
           const existing = await prisma.$queryRaw<Array<{ id: string; deletedAt: Date | null }>>`
             SELECT id, "deletedAt" FROM users
-            WHERE ${isEmailConflict ? prisma.$queryRaw`email = ${data.email}` : prisma.$queryRaw`username = ${data.username}`}
+            WHERE ${isEmailConflict ? Prisma.sql`email = ${data.email}` : Prisma.sql`username = ${data.username}`}
             LIMIT 1
           `
           if (existing[0]?.deletedAt) {
@@ -187,16 +200,30 @@ export class UsersService {
     const existing = await this.findById(id, actor)
 
     // FIX 4: Admin count check inside transaction to prevent TOCTOU race
-    if (data.role === 'MANAGER_ADMIN' || data.role === 'ADMIN') {
-      if (!['MANAGER_ADMIN', 'ADMIN'].includes(existing.role)) {
+    if (data.role === 'SUPER_ADMIN') {
+      if (existing.role !== 'SUPER_ADMIN') {
         await prisma.$transaction(async (tx: TransactionClient) => {
           const count = await tx.user.count({
-            where: { role: { in: ['MANAGER_ADMIN', 'ADMIN'] } },
+            where: { role: 'SUPER_ADMIN', deletedAt: null },
+          })
+          if (count >= 1) {
+            throw {
+              statusCode: 400,
+              message: 'System limit reached: Maximum 1 Super Admin allowed.',
+            }
+          }
+        })
+      }
+    } else if (data.role === 'MANAGER_ADMIN' || data.role === 'ADMIN') {
+      if (existing.role !== data.role) {
+        await prisma.$transaction(async (tx: TransactionClient) => {
+          const count = await tx.user.count({
+            where: { role: data.role as UserRole, deletedAt: null },
           })
           if (count >= 2) {
             throw {
               statusCode: 400,
-              message: 'System limit reached: Maximum 2 global Administrator Managers allowed.',
+              message: `System limit reached: Maximum 2 ${String(data.role)} users allowed.`,
             }
           }
         })

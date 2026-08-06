@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { marginCorrectionService } from './margin-correction.service.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
+import { z } from 'zod'
 
 export async function marginCorrectionRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authenticate)
@@ -18,19 +19,16 @@ export async function marginCorrectionRoutes(fastify: FastifyInstance) {
   fastify.post('/repair', {
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')]
   }, async (request, reply) => {
-    const body = request.body as {
-      itemId:      string
-      channelId:   string
-      newCost:     number
-      newRetail?:  number
-      repairRecentSales?: boolean
-    }
-    
-    if (!body.itemId || !body.channelId || !body.newCost) {
-      return reply.code(400).send({ message: 'itemId, channelId and newCost are required' })
-    }
+    const body = z.object({
+      itemId:            z.string().uuid(),
+      channelId:         z.string().uuid(),
+      newCost:           z.number().positive(),
+      newRetail:         z.number().positive().optional(),
+      repairRecentSales: z.boolean().optional(),
+    }).parse(request.body)
 
     const actorId = (request as any).user.sub
-    return marginCorrectionService.repairMargin({ ...body, actorId })
+    const actorRole = (request as any).user.role
+    return marginCorrectionService.repairMargin({ ...body, actorId, actorRole })
   })
 }

@@ -4,7 +4,22 @@ import { api } from '@/lib/api-client'
 import { useAuthStore } from '@/stores/auth.store'
 
 interface ManagerPinModalProps {
-  action:     'void' | 'refund' | 'discount_override' | 'price_below_min' | 'negative_margin'
+  action:
+    | 'void'
+    | 'refund'
+    | 'discount_override'
+    | 'price_below_min'
+    | 'negative_margin'
+    | 'customer_delete'
+    | 'item_create'
+    | 'item_update'
+    | 'item_delete'
+    | 'purchase_delete'
+    | 'expense_delete'
+    | 'credit_sale'
+    | 'channel_create'
+    | 'channel_update'
+    | 'channel_delete'
   contextId:  string
   marginPercent?: number
   onApproved: (token: string) => void
@@ -18,7 +33,7 @@ export function ManagerPinModal({ action, contextId, marginPercent, onApproved, 
   const [pin, setPin]       = useState('')
   const [error, setError]   = useState('')
   const [loading, setLoading] = useState(false)
-  const { user } = useAuthStore()
+  const { user, accessToken } = useAuthStore()
 
   const handleKey = (key: string) => {
     if (loading) return
@@ -31,12 +46,15 @@ export function ManagerPinModal({ action, contextId, marginPercent, onApproved, 
 
   const handleSubmit = async () => {
     if (!pin || pin.length < 4) { setError('PIN must be at least 4 digits'); return }
+    const channelId = user?.channelId || user?.channel?.id
+    if (!accessToken) { setError('Your session has expired. Sign in again.'); return }
+    if (!channelId) { setError('No channel is assigned for this approval.'); return }
     setError('')
     setLoading(true)
     try {
       const res = await api.post<{ approvalToken: string }>('/auth/manager-approve', {
-        action, pin, contextId, channelId: user?.channelId, marginPercent,
-      })
+        action, pin, contextId, channelId, marginPercent,
+      }, accessToken)
       onApproved(res.approvalToken)
     } catch (err: any) {
       setError(err.message || 'Verification failed. Try again.')

@@ -11,12 +11,15 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /api/v1/users/approvals
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const where: any = { status: 'PENDING' }
     
     // Standard Managers only see their channel's approvals
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       where.channelId = request.user.channelId
     }
 
@@ -42,7 +45,7 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /api/v1/users/approvals/:id/approve
   app.post('/:id/approve', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const approval = await prisma.managerApproval.findUnique({
@@ -55,13 +58,19 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
 
     // Permission check for standard managers
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        return reply.status(400).send({ error: 'Your account has no channel assigned' })
+      }
       if (approval.channelId !== request.user.channelId) {
         return reply.status(403).send({ error: 'Unauthorized: Approval request is for a different channel' })
       }
-      // Basic managers shouldn't approve user creation/deletes of other managers usually,
-      // but for customers they can.
-      if (['user_create', 'user_delete', 'user_update'].includes(approval.action)) {
-        return reply.status(403).send({ error: 'Higher level admin approval required for user management' })
+      const adminOnlyActions = [
+        'user_create', 'user_delete', 'user_update',
+        'channel_create', 'channel_update', 'channel_delete',
+        'purchase_delete', 'expense_delete',
+      ]
+      if (adminOnlyActions.includes(approval.action)) {
+        return reply.status(403).send({ error: 'Higher level admin approval required for this action' })
       }
     }
 
@@ -105,7 +114,7 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /api/v1/users/approvals/:id/reject
   app.post('/:id/reject', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const { notes } = z.object({ notes: z.string().optional() }).parse(request.body)
@@ -120,6 +129,9 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
 
     // Permission check for standard managers
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        return reply.status(400).send({ error: 'Your account has no channel assigned' })
+      }
       if (approval.channelId !== request.user.channelId) {
         return reply.status(403).send({ error: 'Unauthorized' })
       }
