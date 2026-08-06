@@ -48,7 +48,10 @@ export default function ChannelsPage() {
       setShowModal(false)
       setForm({ name: '', code: '', type: 'RETAIL_SHOP', address: '', phone: '', isMainWarehouse: false })
       fetchChannels()
-    } catch (err) { setError('Failed: ' + (err as Error).message) }
+    } catch (err: any) {
+      const requestId = err.approvalId ? ` Request ID: ${err.approvalId}` : ''
+      setError(`${err.message || 'Failed to create channel.'}${requestId}`)
+    }
     finally { setSaving(false) }
   }
 
@@ -59,7 +62,8 @@ export default function ChannelsPage() {
       setChannels(prev => prev.filter(ch => ch.id !== channelToDelete.id))
       setChannelToDelete(null)
     } catch (err: any) {
-      throw new Error(err.message || 'Deletion failed')
+      const requestId = err.approvalId ? ` Request ID: ${err.approvalId}` : ''
+      throw new Error(`${err.message || 'Deletion failed'}${requestId}`)
     }
   }
 

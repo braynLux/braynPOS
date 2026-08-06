@@ -6,24 +6,29 @@ import { RATE }            from '../../lib/rate-limit.plugin.js'
 import { prisma }          from '../../lib/prisma.js'
 import { z }               from 'zod'
 
+const HQ_EXPENSE_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 export const expensesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // GET /expenses
   app.get('/', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
-      channelId: z.string().optional(),
+      channelId: z.string().uuid().optional(),
       startDate: z.string().optional(),
       endDate:   z.string().optional(),
       page:      z.coerce.number().min(1).optional(),
       limit:     z.coerce.number().min(1).max(100).optional(),
     }).parse(request.query)
 
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      query.channelId = request.user.channelId || undefined
+    if (!HQ_EXPENSE_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      query.channelId = request.user.channelId
     }
 
     return expensesService.findAll(query)
@@ -34,10 +39,13 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // Expense records contain amount, description, and channel data.
   app.get('/:id', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }    = request.params as { id: string }
-    const isHQ      = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)
+    const isHQ      = HQ_EXPENSE_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     const channelId = isHQ ? undefined : (request.user.channelId || undefined)
     const expense   = await expensesService.findById(id, channelId)
 
@@ -51,18 +59,21 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // POST /expenses
   app.post('/', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
       channelId:   z.string().uuid(),
       description: z.string().min(1).max(200),
-      amount:      z.number().positive(),
+      amount:      z.coerce.number().positive(),
       category:    z.string().optional(),
       receiptRef:  z.string().optional(),
       notes:       z.string().max(500).optional(),
     }).parse(request.body)
 
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!HQ_EXPENSE_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (body.channelId !== request.user.channelId) {
         throw { statusCode: 403, message: 'You can only record expenses for your assigned channel' }
       }
@@ -75,12 +86,15 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // DELETE /expenses/:id
   app.delete('/:id', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }            = request.params as { id: string }
     const { approvalToken } = z.object({ approvalToken: z.string().optional() }).parse(request.body || {})
 
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (!approvalToken) {
         // FIX 9: Use top-level prisma import — dynamic import was redundant
         const approval = await (prisma as any).managerApproval.create({
@@ -108,7 +122,7 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const isHQ      = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)
+    const isHQ      = HQ_EXPENSE_ROLES.includes(request.user.role)
     const channelId = isHQ ? undefined : (request.user.channelId || undefined)
 
     // FIX 1: Correct param order — was passing request.user.sub as channelId.

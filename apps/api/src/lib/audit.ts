@@ -49,6 +49,7 @@ export const AUDIT = {
   // Stock
   STOCK_ADJUST:          'stock.adjust',
   STOCK_WRITE_OFF:       'stock.write_off',
+  MARGIN_REPAIR:         'margin.repair',
 
   // Transfers
   TRANSFER_DISPUTE:      'transfer.dispute',
@@ -82,6 +83,7 @@ export const AUDIT = {
   TAX_CONFIG:            'tax.config',
 
   // Sessions
+  SESSION_OPEN:          'session.open',
   SESSION_CLOSE:         'session.close',
 
   // Approvals

@@ -1,5 +1,13 @@
 import { defineConfig } from 'vitest/config'
 import path from 'path'
+import dotenv from 'dotenv'
+
+dotenv.config({
+  path: path.resolve(__dirname, '.env.test'),
+  override: process.env.CI !== 'true',
+})
+
+process.env.DIRECT_URL = process.env.DIRECT_URL || process.env.DATABASE_URL
 
 export default defineConfig({
   test: {

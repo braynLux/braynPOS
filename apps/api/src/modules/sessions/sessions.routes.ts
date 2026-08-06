@@ -11,14 +11,17 @@ export const sessionsRoutes: FastifyPluginAsync = async (app) => {
   // POST /sessions/open
   app.post('/open', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request, reply) => {
     const body = z.object({
       channelId:    z.string().uuid(),
-      openingFloat: z.number().min(0),
+      openingFloat: z.coerce.number().min(0),
     }).parse(request.body)
 
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (body.channelId !== request.user.channelId) {
         throw { statusCode: 403, message: 'You can only open sessions for your assigned channel' }
       }
@@ -31,16 +34,16 @@ export const sessionsRoutes: FastifyPluginAsync = async (app) => {
   // POST /sessions/:id/close
   app.post('/:id/close', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const body   = z.object({
-      closingFloat: z.number().min(0),
+      closingFloat: z.coerce.number().min(0),
       notes:        z.string().optional(),
     }).parse(request.body)
 
     const session = await sessionsService.findById(id)
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
       if (session.channelId !== request.user.channelId) {
         throw { statusCode: 403, message: 'You do not have access to close this session' }
       }
@@ -57,7 +60,7 @@ export const sessionsRoutes: FastifyPluginAsync = async (app) => {
   // PROMOTER and STOREKEEPER who have no need to view session float data.
   app.get('/active', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request) => {
     return sessionsService.getActiveSession(request.user.sub)
   })
@@ -66,12 +69,12 @@ export const sessionsRoutes: FastifyPluginAsync = async (app) => {
   // FIX 4: Added authorize() and channel scope check.
   app.get('/:id', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request, reply) => {
     const { id }  = request.params as { id: string }
     const session = await (sessionsService as any).findById(id)
 
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
       if (session.channelId !== request.user.channelId) {
         return reply.status(403).send({ error: 'Forbidden', message: 'You do not have access to this session' })
       }
@@ -83,17 +86,20 @@ export const sessionsRoutes: FastifyPluginAsync = async (app) => {
   // GET /sessions
   app.get('/', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
-      channelId: z.string().optional(),
+      channelId: z.string().uuid().optional(),
       page:      z.coerce.number().min(1).optional(),
       limit:     z.coerce.number().min(1).max(100).optional(),
     }).parse(request.query)
 
     let cid = query.channelId
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      cid = request.user.channelId || undefined
+    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      cid = request.user.channelId
     }
 
     return sessionsService.findAll(cid, query.page, query.limit)

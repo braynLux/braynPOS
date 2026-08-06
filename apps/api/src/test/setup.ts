@@ -11,7 +11,10 @@ beforeAll(async () => {
   // Ensure the test database is fully synced with the current schema.prisma
   try {
     console.log('Pushing schema to test database...')
-    execSync('npx prisma db push --skip-generate', { stdio: 'inherit' })
+    execSync('pnpm exec prisma db push --skip-generate', {
+      stdio: 'inherit',
+      env: process.env,
+    })
   } catch (err) {
     console.error('Failed to sync test database schema:', err)
     // Don't exit process, let Vitest handle it
@@ -27,7 +30,9 @@ afterEach(async () => {
     'inventory_balances', 'stock_movements',
     'serials', 'transfer_lines', 'transfers',
     'items', 'categories', 'brands', 'suppliers',
+    'support_messages', 'support_tickets',
     'sales_sessions', 'users', 'channels', 'audit_logs',
+    'manager_approvals',
     'notifications', 'idempotency_records', 'settings'
   ]
 

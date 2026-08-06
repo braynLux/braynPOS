@@ -19,7 +19,8 @@ export class AuditService {
     return prisma.$transaction(async (tx) => {
       // 1. Verify the sale and item association
       const saleItem = await tx.saleItem.findFirstOrThrow({
-        where: { saleId, itemId }
+        where: { saleId, itemId },
+        include: { sale: { select: { channelId: true } } },
       })
 
       // 2. Fetch actor info for auditing
@@ -31,10 +32,17 @@ export class AuditService {
       // 3. Find/Verify the specific serial record if oldId provided
       // If oldId is null, we are attaching a serial to a non-serialized sale (if allowed)
       let oldSerialNo = 'NONE'
+      let serialIdForSale = oldSerialId
       if (oldSerialId) {
         const serialRecord = await tx.serial.findUniqueOrThrow({
           where: { id: oldSerialId }
         })
+        if (serialRecord.itemId !== itemId || serialRecord.channelId !== saleItem.sale.channelId) {
+          throw { statusCode: 422, message: 'Old serial does not belong to this sale item and channel' }
+        }
+        if (saleItem.serialId && saleItem.serialId !== oldSerialId) {
+          throw { statusCode: 422, message: 'Old serial does not match the serial currently attached to this sale line' }
+        }
         oldSerialNo = serialRecord.serialNo
         
         // Update the existing record or create a replacement audit
@@ -42,15 +50,52 @@ export class AuditService {
           where: { id: oldSerialId },
           data: { 
             serialNo: newSerialNo,
+            status:   'SOLD',
+            saleId,
             updatedAt: new Date()
           }
         })
+      } else {
+        const existingSerial = await tx.serial.findUnique({
+          where: {
+            serialNo_itemId_channelId: {
+              serialNo:  newSerialNo,
+              itemId,
+              channelId: saleItem.sale.channelId,
+            },
+          },
+        })
+
+        if (existingSerial?.saleId && existingSerial.saleId !== saleId) {
+          throw { statusCode: 422, message: 'New serial is already attached to another sale' }
+        }
+
+        const serial = existingSerial
+          ? await tx.serial.update({
+              where: { id: existingSerial.id },
+              data:  { status: 'SOLD', saleId, deletedAt: null },
+            })
+          : await tx.serial.create({
+              data: {
+                serialNo:  newSerialNo,
+                itemId,
+                channelId: saleItem.sale.channelId,
+                status:    'SOLD',
+                saleId,
+              },
+            })
+        serialIdForSale = serial.id
       }
+
+      await tx.saleItem.update({
+        where: { id: saleItem.id },
+        data:  { serialId: serialIdForSale },
+      })
 
       // 4. Log the Serial Audit specifically
       await tx.serialAudit.create({
         data: {
-          serialId:     oldSerialId || 'NEW',
+          serialId:     serialIdForSale || 'NEW',
           action:       'SWAP',
           oldSerialNo,
           newSerialNo,

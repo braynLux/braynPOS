@@ -55,13 +55,16 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /users
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = listUsersQuery.parse(request.query)
     
     // Strict Channel Isolation for regular Managers
     if (!['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
-      query.channelId = request.user.channelId || undefined
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      query.channelId = request.user.channelId
     }
 
     return usersService.findAll(query, request.user)
@@ -69,7 +72,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /users/:id
   app.get('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     return usersService.findById(id, request.user)
@@ -77,7 +80,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /users
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     // Inline schema to ensure validation picks up latest changes during debugging
     const createSchema = z.object({
@@ -111,6 +114,9 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
     // Security check: Managers and Manager Admins need Administrator Manager approval (for lower roles)
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       // Create user as PENDING
       const user = await usersService.create({ ...body, status: 'PENDING' }, request.user)
       
@@ -119,7 +125,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
         data: {
           action: 'user_create',
           contextId: user.id,
-          channelId: body.channelId || request.user.channelId || null,
+          channelId: request.user.channelId,
           requesterId: request.user.sub,
           notes: `Pending creation for ${user.username}`
         }
@@ -138,7 +144,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /users/:id
   app.patch('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const body = updateUserSchema.parse(request.body)
@@ -177,6 +183,9 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
     // Security check: Only Managers need approval for sensitive changes
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       const isSensitive = body.role && !['CASHIER', 'STOREKEEPER', 'PROMOTER', 'SALES_PERSON'].includes(body.role)
       const isChannelChange = body.channelId !== undefined
 
@@ -197,7 +206,9 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
             message: 'An approval request has been sent to the Administrator Manager.'
           })
         }
-        const approved = await validateApprovalToken(approvalToken, 'user_update', id)
+        const approved = await validateApprovalToken(
+          approvalToken, 'user_update', id, request.user.channelId || undefined
+        )
         if (!approved) {
           return reply.status(403).send({ error: 'Invalid or expired Administrator Manager approval' })
         }
@@ -209,17 +220,18 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /users/:id/salary
   app.patch('/:id/salary', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const { grossSalary } = z.object({ grossSalary: z.number().min(0) }).parse(request.body)
+    await usersService.findById(id, request.user)
     return usersService.updateSalary(id, grossSalary)
   })
 
 
   // DELETE /users/:id (soft delete)
   app.delete('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const { password, approvalToken } = z.object({ 
@@ -229,6 +241,9 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
     // Security check: Managers need Administrator Manager approval
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (!approvalToken) {
         // Create an asynchronous approval request
         const approval = await (prisma as any).managerApproval.create({
@@ -247,7 +262,9 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
         })
       }
       // Use the target user ID as contextId
-      const approved = await validateApprovalToken(approvalToken, 'user_delete', id)
+      const approved = await validateApprovalToken(
+        approvalToken, 'user_delete', id, request.user.channelId || undefined
+      )
       if (!approved) {
         return reply.status(403).send({ error: 'Invalid or expired Administrator Manager approval' })
       }
@@ -269,10 +286,11 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /users/:id/reset-password
   app.post('/:id/reset-password', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const { password } = z.object({ password: z.string().min(6) }).parse(request.body)
+    await usersService.findById(id, request.user)
 
     // Hierarchy check: actor must strictly outrank target
     const targetUser = await prisma.user.findUnique({ where: { id }, select: { role: true, username: true } })
@@ -295,6 +313,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const { password } = z.object({ password: z.string() }).parse(request.body)
+    await usersService.findById(id, request.user)
 
     // Fetch target user's role
     const targetUser = await prisma.user.findUnique({ where: { id }, select: { role: true } })

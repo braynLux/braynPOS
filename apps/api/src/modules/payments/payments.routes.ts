@@ -1,19 +1,34 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
-import { prisma } from '../../lib/prisma.js'
+import { basePrisma, prisma } from '../../lib/prisma.js'
+import { RATE } from '../../lib/rate-limit.plugin.js'
 import { mobileMoneyProvider } from './providers/mobile-money.provider.js'
+import { timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
+
+const webhookSchema = z.object({
+  TransID: z.string().min(1).max(120),
+  TransAmount: z.coerce.number().nonnegative().optional(),
+  ResultCode: z.coerce.number().int(),
+}).passthrough()
+
+function validWebhookSecret(headerValue: unknown, secret: string): boolean {
+  if (typeof headerValue !== 'string') return false
+  const received = Buffer.from(headerValue)
+  const expected = Buffer.from(secret)
+  return received.length === expected.length && timingSafeEqual(received, expected)
+}
 
 export const paymentsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // GET /payments?saleId=xxx
   app.get('/', {
+    config: RATE.READ,
     preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
   }, async (request) => {
     const { saleId } = z.object({ saleId: z.string().uuid() }).parse(request.query)
-    const { basePrisma } = await import('../../lib/prisma.js')
 
     const sale = await basePrisma.sale.findUnique({
       where: { id: saleId },
@@ -36,8 +51,22 @@ export const paymentsRoutes: FastifyPluginAsync = async (app) => {
   })
 
   // POST /payments/webhook — mobile money webhook (no auth required)
-  app.post('/webhook', { config: { rawBody: true } }, async (request) => {
-    const result = await mobileMoneyProvider.handleWebhook(request.body as Record<string, unknown>)
+  app.post('/webhook', {
+    config: {
+      rawBody: true,
+      rateLimit: { max: 60, timeWindow: '1 minute' },
+    },
+  }, async (request, reply) => {
+    const secret = process.env.MOBILE_MONEY_WEBHOOK_SECRET
+    if (secret && !validWebhookSecret(request.headers['x-webhook-secret'], secret)) {
+      return reply.status(401).send({ error: 'Invalid webhook secret' })
+    }
+    if (!secret && process.env.NODE_ENV === 'production') {
+      return reply.status(503).send({ error: 'Mobile money webhook secret is not configured' })
+    }
+
+    const payload = webhookSchema.parse(request.body)
+    const result = await mobileMoneyProvider.handleWebhook(payload)
 
     if (result.status === 'CONFIRMED') {
       await prisma.payment.updateMany({

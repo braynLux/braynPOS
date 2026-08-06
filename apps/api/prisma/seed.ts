@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import argon2 from 'argon2'
+import { randomUUID } from 'crypto'
 
 const prisma = new PrismaClient()
 
@@ -24,6 +25,9 @@ export const ACCOUNT_IDS = Object.fromEntries(
 ) as Record<string, string>
 
 async function main() {
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD || (process.env.NODE_ENV === 'production' ? undefined : 'Admin@123')
+  const adminPasswordHashOptions = { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4 }
+
   console.log('🌱 Seeding BRAYN Hybrid Edition database...')
 
   // ── Upsert system accounts ──────────────────────────────────────
@@ -57,13 +61,13 @@ async function main() {
       id: 'usr-super-admin',
       username: 'admin',
       email: 'admin@brayn.app',
-      passwordHash: await argon2.hash('Admin@123', { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4 }),
+      passwordHash: await argon2.hash(adminPassword || randomUUID(), adminPasswordHashOptions),
       role: 'SUPER_ADMIN',
       channelId: defaultChannel.id,
     },
-    update: {
-      passwordHash: await argon2.hash('Admin@123', { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 4 }),
-    },
+    update: adminPassword
+      ? { passwordHash: await argon2.hash(adminPassword, adminPasswordHashOptions) }
+      : {},
   })
   console.log(`  ✓ Admin user: ${adminUser.username} (${adminUser.email})`)
 
@@ -137,8 +141,20 @@ async function main() {
       itemId: itemLaptop.id,
       channelId: defaultChannel.id,
       availableQty: 50,
+      retailPrice: itemLaptop.retailPrice,
+      wholesalePrice: itemLaptop.wholesalePrice,
+      minRetailPrice: itemLaptop.minRetailPrice,
+      minWholesalePrice: itemLaptop.minWholesalePrice,
+      weightedAvgCost: itemLaptop.weightedAvgCost,
     },
-    update: { availableQty: 50 },
+    update: {
+      availableQty: 50,
+      retailPrice: itemLaptop.retailPrice,
+      wholesalePrice: itemLaptop.wholesalePrice,
+      minRetailPrice: itemLaptop.minRetailPrice,
+      minWholesalePrice: itemLaptop.minWholesalePrice,
+      weightedAvgCost: itemLaptop.weightedAvgCost,
+    },
   })
 
   await (prisma as any).inventoryBalance.upsert({
@@ -149,8 +165,20 @@ async function main() {
       itemId: itemMouse.id,
       channelId: defaultChannel.id,
       availableQty: 200,
+      retailPrice: itemMouse.retailPrice,
+      wholesalePrice: itemMouse.wholesalePrice,
+      minRetailPrice: itemMouse.minRetailPrice,
+      minWholesalePrice: itemMouse.minWholesalePrice,
+      weightedAvgCost: itemMouse.weightedAvgCost,
     },
-    update: { availableQty: 200 },
+    update: {
+      availableQty: 200,
+      retailPrice: itemMouse.retailPrice,
+      wholesalePrice: itemMouse.wholesalePrice,
+      minRetailPrice: itemMouse.minRetailPrice,
+      minWholesalePrice: itemMouse.minWholesalePrice,
+      weightedAvgCost: itemMouse.weightedAvgCost,
+    },
   })
 
   // ── Seed an open sales session ──────────────────────────────────

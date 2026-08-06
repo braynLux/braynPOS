@@ -342,7 +342,7 @@ export default function CreditPage() {
                     </tbody>
                   </table>
                   <div style={{ marginTop: 16, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    ℹ️ This will update the customer's credit limit and clear the invoice if settled in full.
+                    ℹ️ This will update the customer&apos;s credit limit and clear the invoice if settled in full.
                   </div>
                 </div>
               )}

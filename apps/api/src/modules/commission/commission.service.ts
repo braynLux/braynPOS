@@ -85,14 +85,6 @@ async function resolveRule(userId: string, channelId: string, saleType: string) 
 // ── Calculate Commission for a Sale ──────────────────────────────────
 export async function calculateCommission(saleId: string, tx?: any): Promise<CommissionSummary | null> {
   const db = tx || prisma
-  // ── 0. Check Global / Channel Settings ────────────────────────────────
-  const settings = await settingsService.getAll(null) 
-  const payrollSettings = settings.payrollSettings as any
-  if (payrollSettings?.commissionsEnabled === false) {
-    commissionLogger.info({ saleId }, 'commission calc skipped — disabled in settings')
-    return null
-  }
-
   const sale = await db.sale.findUnique({
     where:   { id: saleId },
     include: { items: true },
@@ -100,6 +92,13 @@ export async function calculateCommission(saleId: string, tx?: any): Promise<Com
 
   if (!sale) {
     commissionLogger.warn({ saleId }, 'commission calc skipped — sale not found')
+    return null
+  }
+
+  const settings = await settingsService.getAll(sale.channelId)
+  const payrollSettings = settings.payrollSettings as any
+  if (payrollSettings?.commissionsEnabled === false) {
+    commissionLogger.info({ saleId, channelId: sale.channelId }, 'commission calc skipped — disabled in settings')
     return null
   }
 
@@ -296,7 +295,7 @@ export async function getCommissionSummary(
   }
 
   // Non-managers can only see their own commission entries
-  if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(actor.role)) {
+  if (!['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(actor.role)) {
     where.userId = actor.sub   // FIX: was actor.id — should be actor.sub
   }
 

@@ -1,11 +1,6 @@
 import jwt  from 'jsonwebtoken'
-import fs   from 'fs'
-import path from 'path'
-import { authLogger } from './logger.js'
 import type { UserRole } from '@prisma/client'
 
-const PRIVATE_KEY_PATH = process.env.JWT_PRIVATE_KEY_PATH || './keys/private.pem'
-const PUBLIC_KEY_PATH  = process.env.JWT_PUBLIC_KEY_PATH  || './keys/public.pem'
 const ACCESS_EXPIRY    = process.env.JWT_ACCESS_EXPIRY    || '15m'
 const REFRESH_EXPIRY   = process.env.JWT_REFRESH_EXPIRY   || '7d'
 
@@ -17,6 +12,10 @@ export const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const algorithm  = 'HS256'
 const privateKey = process.env.JWT_SECRET || 'fallback-secret-for-restoration'
 const publicKey  = privateKey
+
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('FATAL: JWT_SECRET is required in production.')
+}
 
 // ── Emergency Recovery Note ──────────────────────────────────────────
 // Symmetric signing (HS256) is temporarily allowed to restore access.

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { api } from '@/lib/api-client'
 import { useAuthStore } from '@/stores/auth.store'
 import { PhoneInput } from '@/components/shared/PhoneInput'
+import { ManagerPinModal } from '@/components/shared/ManagerPinModal'
 
 interface Customer {
   id: string
@@ -14,7 +15,9 @@ interface Customer {
   outstandingCredit: number
   loyaltyPoints: number
   createdAt: string
+  channelId?: string
 }
+interface Channel { id: string; name: string }
 
 const EMPTY_CUSTOMER = { name: '', phone: '', email: '', tier: 'BRONZE', creditLimit: 1000 }
 
@@ -27,6 +30,11 @@ export default function CustomersPage() {
   const [editMode, setEditMode] = useState(false)
   const [current, setCurrent] = useState<Partial<Customer>>(EMPTY_CUSTOMER)
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null)
+  const user = useAuthStore((s) => s.user)
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState('')
+  const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(user?.role || '')
 
   const fetchCustomers = async () => {
     if (!token) return
@@ -44,15 +52,30 @@ export default function CustomersPage() {
     return () => clearTimeout(timer)
   }, [token, search])
 
+  useEffect(() => {
+    if (!token || !isHQ) return
+    api.get<Channel[]>('/channels', token)
+      .then(res => {
+        const list = Array.isArray(res) ? res : [res as unknown as Channel]
+        setChannels(list)
+        setSelectedChannelId(prev => prev || list[0]?.id || '')
+      })
+      .catch(console.error)
+  }, [token, isHQ])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!current.name?.trim()) return alert('Name is required')
+    if (!editMode && isHQ && !selectedChannelId) return alert('Select a channel for this customer')
     setSaving(true)
     try {
       if (editMode && current.id) {
         await api.patch(`/customers/${current.id}`, current, token!)
       } else {
-        await api.post('/customers', current, token!)
+        await api.post('/customers', {
+          ...current,
+          ...(isHQ ? { channelId: selectedChannelId } : {}),
+        }, token!)
       }
       setShowModal(false)
       fetchCustomers()
@@ -61,12 +84,28 @@ export default function CustomersPage() {
     } finally { setSaving(false) }
   }
 
-  const handleDelete = async (id: string, name: string) => {
+  const deleteCustomer = async (customer: Customer, approvalToken?: string) => {
+    await api.delete(`/customers/${customer.id}`, token!, approvalToken ? { approvalToken } : undefined)
+    fetchCustomers()
+    setDeleteTarget(null)
+  }
+
+  const handleDelete = async (customer: Customer) => {
+    const name = customer.name
     if (!confirm(`Delete customer "${name}"?`)) return
     try {
-      await api.delete(`/customers/${id}`, token!)
-      fetchCustomers()
-    } catch (err) { alert('Failed: ' + (err as Error).message) }
+      if (!isHQ) {
+        setDeleteTarget(customer)
+        return
+      }
+      await deleteCustomer(customer)
+    } catch (err: any) {
+      if (err.status === 403 && user?.channelId) {
+        setDeleteTarget(customer)
+        return
+      }
+      alert('Failed: ' + (err as Error).message)
+    }
   }
 
   const fmt = (n: number) => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(n)
@@ -118,7 +157,7 @@ export default function CustomersPage() {
                   <td><span className="badge badge-info">{c.loyaltyPoints} pts</span></td>
                   <td style={{ textAlign: 'right' }}>
                     <button className="btn btn-ghost btn-sm" onClick={() => { setCurrent(c); setEditMode(true); setShowModal(true) }}>Edit</button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(c.id, c.name)} style={{ color: 'var(--danger)' }}>Delete</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(c)} style={{ color: 'var(--danger)' }}>Delete</button>
                   </td>
                 </tr>
               ))}
@@ -136,6 +175,14 @@ export default function CustomersPage() {
                 <label>Full Name *</label>
                 <input className="input" value={current.name || ''} onChange={e => setCurrent({ ...current, name: e.target.value })} required />
               </div>
+              {!editMode && isHQ && (
+                <div className="form-group">
+                  <label>Channel *</label>
+                  <select className="input" value={selectedChannelId} onChange={e => setSelectedChannelId(e.target.value)} required>
+                    {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 12 }}>
                 <div className="form-group" style={{ flex: 1 }}>
                   <PhoneInput 
@@ -183,6 +230,14 @@ export default function CustomersPage() {
             </form>
           </div>
         </div>
+      )}
+      {deleteTarget && (
+        <ManagerPinModal
+          action="customer_delete"
+          contextId={deleteTarget.id}
+          onApproved={(approvalToken) => deleteCustomer(deleteTarget, approvalToken).catch(err => alert('Failed: ' + (err as Error).message))}
+          onCancel={() => setDeleteTarget(null)}
+        />
       )}
     </div>
   )

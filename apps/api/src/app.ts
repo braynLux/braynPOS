@@ -57,7 +57,7 @@ export async function buildApp() {
     const contentType = request.headers['content-type'] ?? ''
 
     if (hasBody && !contentType.includes('application/json') && !contentType.includes('multipart/form-data')) {
-      reply.status(415).send({
+      return reply.status(415).send({
         statusCode: 415,
         error:      'Unsupported Media Type',
         message:    'Content-Type must be application/json or multipart/form-data',
@@ -214,9 +214,9 @@ export async function buildApp() {
     await v1.register(aiRoutes, { prefix: '/ai' })
 
     const { notificationRoutes } = await import('./modules/notifications/notifications.routes.js')
-  await app.register(notificationRoutes, { prefix: '/notifications' })
+    await v1.register(notificationRoutes, { prefix: '/notifications' })
 
-  const { auditRoutes } = await import('./modules/audit/audit.routes.js')
+    const { auditRoutes } = await import('./modules/audit/audit.routes.js')
     await v1.register(auditRoutes, { prefix: '/audit' })
 
     const { marginCorrectionRoutes } = await import('./modules/audit/margin-correction.routes.js')

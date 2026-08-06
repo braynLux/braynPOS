@@ -81,7 +81,7 @@ export default function MarginCorrectionPage() {
       <div className="page-header" style={{ marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: '1.8rem', fontWeight: 900, letterSpacing: '-0.03em' }}>🛡️ Margin Correction Center</h1>
-          <p style={{ color: 'var(--text-muted)' }}>Identify "Ghost Items" with zero cost and retroactively repair historical commission data.</p>
+          <p style={{ color: 'var(--text-muted)' }}>Identify &quot;Ghost Items&quot; with zero cost and retroactively repair historical commission data.</p>
         </div>
       </div>
 

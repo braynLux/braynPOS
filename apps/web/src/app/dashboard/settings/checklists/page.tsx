@@ -18,10 +18,17 @@ interface ServiceChecklist {
   createdAt: string
 }
 
+interface Channel {
+  id: string
+  name: string
+}
+
 export default function ChecklistDesignerPage() {
   const token = useAuthStore(s => s.accessToken)
   const user = useAuthStore(s => s.user)
   const [checklists, setChecklists] = useState<ServiceChecklist[]>([])
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState('')
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -30,11 +37,20 @@ export default function ChecklistDesignerPage() {
     name:     '',
     fields:   [] as ChecklistField[]
   })
+  const canChooseChannel = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(user?.role || '')
 
   useEffect(() => {
     if (!token) return
     fetchChecklists()
-  }, [token])
+    if (canChooseChannel) {
+      api.get<Channel[]>('/channels', token)
+        .then(channelList => {
+          setChannels(channelList)
+          if (!selectedChannelId && channelList.length > 0) setSelectedChannelId(channelList[0].id)
+        })
+        .catch(console.error)
+    }
+  }, [token, canChooseChannel, selectedChannelId])
 
   const fetchChecklists = async () => {
     try {
@@ -73,11 +89,16 @@ export default function ChecklistDesignerPage() {
       toast.error('Add at least one field to the checklist')
       return
     }
+    const channelId = canChooseChannel ? selectedChannelId : user?.channelId
+    if (!channelId) {
+      toast.error('Select a channel for this checklist')
+      return
+    }
     setSaving(true)
     try {
       await api.post('/settings/checklists', { 
         ...form, 
-        channelId: user?.channelId 
+        channelId,
       }, token!)
       toast.success('Checklist template created')
       setShowAdd(false)
@@ -120,6 +141,15 @@ export default function ChecklistDesignerPage() {
                 <label>Checklist Name *</label>
                 <input className="input" required value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="e.g. Car Intake Form" />
               </div>
+              {canChooseChannel && (
+                <div className="form-group">
+                  <label>Channel *</label>
+                  <select className="input" required value={selectedChannelId} onChange={e => setSelectedChannelId(e.target.value)}>
+                    <option value="">Select channel...</option>
+                    {channels.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+                  </select>
+                </div>
+              )}
               
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>

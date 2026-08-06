@@ -39,4 +39,12 @@ describe('Auth Smoke Test', () => {
     })
     expect([200, 302]).toContain(response.statusCode)
   })
+
+  it('should register notification routes under /v1', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/notifications'
+    })
+    expect(response.statusCode).toBe(401)
+  })
 })

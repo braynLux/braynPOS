@@ -156,6 +156,10 @@ export class TransfersService {
     const transfer = await this.findById(id)
     const t        = transfer as any
 
+    if (t.status !== 'SENT') {
+      throw { statusCode: 400, message: `Only SENT transfers can be received. Current: ${t.status}` }
+    }
+
     let hasDispute           = false
     let totalShrinkageValue  = 0
     let receivedBy           = userId
@@ -181,6 +185,12 @@ export class TransfersService {
       for (const line of lines) {
         const transferLine = t.lines?.find((tl: any) => tl.itemId === line.itemId)
         if (!transferLine) continue
+        if (line.receivedQuantity > transferLine.sentQuantity) {
+          throw {
+            statusCode: 422,
+            message: `Received quantity for item ${line.itemId} cannot exceed sent quantity ${transferLine.sentQuantity}`,
+          }
+        }
 
         // Update transfer line inside the shared transaction avoiding pool deadlocks
         await tx.transferLine.update({

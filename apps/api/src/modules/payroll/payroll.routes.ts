@@ -9,7 +9,7 @@ import { logAction, AUDIT }      from '../../lib/audit.js'
 
 export const payrollRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
-  app.addHook('preHandler', authorize('SUPER_ADMIN', 'MANAGER_ADMIN'))
+  app.addHook('preHandler', authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'))
 
   // POST /payroll/salary-runs/cleanup
   app.post('/salary-runs/cleanup', async () => {
@@ -33,16 +33,19 @@ export const payrollRoutes: FastifyPluginAsync = async (app) => {
       channelId: z.string().uuid().optional(),
     }).parse(request.body)
 
-    const run = await payslipService.createSalaryRun(
-      body.month, body.year, request.user.sub, body.channelId
-    )
+    const channelId = body.channelId || request.user.channelId
+    if (!channelId) {
+      throw { statusCode: 400, message: 'channelId is required to create a salary run' }
+    }
+
+    const run = await payslipService.createSalaryRun(body.month, body.year, request.user.sub, channelId)
     reply.status(201).send(run)
   })
 
   // POST /payroll/salary-runs/:id/finalize
   app.post('/salary-runs/:id/finalize', async (request) => {
     const { id } = request.params as { id: string }
-    return payslipService.finalizeSalaryRun(id, request.user.sub)
+    return payslipService.finalizeSalaryRun(id, request.user.sub, request.user.role)
   })
 
   // GET /payroll/salary-runs
@@ -75,7 +78,7 @@ export const payrollRoutes: FastifyPluginAsync = async (app) => {
     const { id }       = request.params as { id: string }
     const { password } = z.object({ password: z.string() }).parse(request.body)
 
-    const result = await payslipService.deleteSalaryRun(id, request.user.sub, password)
+    const result = await payslipService.deleteSalaryRun(id, request.user.sub, password, request.user.role)
 
     logAction({
       action:    AUDIT.PAYROLL_RUN_DELETE,
@@ -93,7 +96,7 @@ export const payrollRoutes: FastifyPluginAsync = async (app) => {
     const { id }       = request.params as { id: string }
     const { password } = z.object({ password: z.string() }).parse(request.body)
 
-    const result = await payslipService.reverseSalaryRun(id, request.user.sub, password)
+    const result = await payslipService.reverseSalaryRun(id, request.user.sub, password, request.user.role)
 
     logAction({
       action:    AUDIT.PAYROLL_RUN_REVERSE,

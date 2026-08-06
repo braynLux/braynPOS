@@ -1,20 +1,21 @@
-version: '3.8'
-
 networks:
   brayn-net:
     driver: bridge
 
 services:
   api:
-    build: ./apps/api
+    build:
+      context: .
+      dockerfile: Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:change_me_in_production@postgres:5432/braynpos}
-      REDIS_URL: ${REDIS_URL:-redis://:change_me_in_production@redis:6379}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/braynpos
+      DIRECT_URL: postgresql://postgres:${POSTGRES_PASSWORD:-change_me_in_production}@postgres:5432/braynpos
+      REDIS_URL: redis://:${REDIS_PASSWORD:-change_me_in_production}@redis:6379
     ports:
       - "127.0.0.1:4000:4000"
     restart: unless-stopped
@@ -39,7 +40,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_production}
       POSTGRES_DB:       braynpos
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
@@ -65,7 +66,7 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me_in_production}
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:16379:6379"
     volumes:
       - redisdata:/data
     restart: unless-stopped

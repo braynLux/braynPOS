@@ -23,12 +23,18 @@ function resolveChannelId(
   channelId: string | null | undefined,
   queryCid:  string | undefined
 ): string {
+  const isGlobalRole = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(role)
+
+  if (!isGlobalRole) {
+    if (!channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+    return channelId
+  }
+
   const effectiveCid = queryCid || channelId
   if (!effectiveCid) {
-    if (['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(role)) {
-      throw { statusCode: 400, message: 'channelId is required for admin reports (specify a branch)' }
-    }
-    throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    throw { statusCode: 400, message: 'channelId is required for admin reports (specify a branch)' }
   }
   return effectiveCid
 }

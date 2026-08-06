@@ -123,6 +123,46 @@ describe('Multi-Tenant Isolation', () => {
     expect(response.statusCode).toBe(403)
   })
 
+  it('User B report queries should be forced to Channel B even when channelId points to Channel A', async () => {
+    const reportDate = new Date('2026-01-15T10:00:00.000Z')
+
+    await prisma.sale.createMany({
+      data: [
+        {
+          receiptNo: 'REC-A-REPORT',
+          channelId: channelAId,
+          totalAmount: 100,
+          taxAmount: 0,
+          discountAmount: 0,
+          netAmount: 100,
+          performedBy: '550e8400-e29b-41d4-a716-446655440002',
+          createdAt: reportDate,
+        },
+        {
+          receiptNo: 'REC-B-REPORT',
+          channelId: channelBId,
+          totalAmount: 25,
+          taxAmount: 0,
+          discountAmount: 0,
+          netAmount: 25,
+          performedBy: '550e8400-e29b-41d4-a716-446655440003',
+          createdAt: reportDate,
+        },
+      ],
+    })
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/reports/sales-summary?channelId=${channelAId}&startDate=2026-01-15&endDate=2026-01-15`,
+      headers: { authorization: `Bearer ${tokenB}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const data = response.json()
+    expect(data.sales.count).toBe(1)
+    expect(data.sales.netAmount).toBe(25)
+  })
+
   it('User B should NOT see inventory balances for Channel A', async () => {
     const response = await app.inject({
       method: 'GET',
@@ -135,5 +175,110 @@ describe('Multi-Tenant Isolation', () => {
     // and thus NOT show any balances for Channel A
     const found = data.find((ib: any) => ib.channelId === channelAId)
     expect(found).toBeUndefined()
+  })
+
+  it('User B should NOT see Channel A chart accounts from raw SQL chart route', async () => {
+    const account = await prisma.account.create({
+      data: {
+        code: `A-${Date.now()}`,
+        name: 'Channel A Private Account',
+        type: 'ASSET',
+        channelId: channelAId,
+      },
+    })
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/accounting/accounts',
+      headers: { authorization: `Bearer ${tokenB}` },
+    })
+
+    expect(response.statusCode).toBe(200)
+    const data = response.json()
+    const found = data.find((acct: any) => acct.id === account.id)
+    expect(found).toBeUndefined()
+  })
+
+  it('User B should NOT read Channel A journal entries by ID', async () => {
+    const account = await prisma.account.create({
+      data: {
+        code: `JE-${Date.now()}`,
+        name: 'Channel A Journal Account',
+        type: 'ASSET',
+        channelId: channelAId,
+      },
+    })
+    const entry = await prisma.journalEntry.create({
+      data: {
+        description: 'Private Channel A Entry',
+        referenceId: 'private-entry',
+        referenceType: 'ADJUSTMENT',
+        channelId: channelAId,
+        postedBy: '550e8400-e29b-41d4-a716-446655440002',
+        lines: {
+          create: [
+            { accountId: account.id, debitAmount: 1, creditAmount: 0 },
+          ],
+        },
+      },
+    })
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/accounting/journal-entries/${entry.id}`,
+      headers: { authorization: `Bearer ${tokenB}` },
+    })
+
+    expect(response.statusCode).toBe(404)
+  })
+
+  it('User B should NOT read or reply to Channel A support tickets', async () => {
+    const ticket = await prisma.supportTicket.create({
+      data: {
+        refCode: 'SUP-A-REPORT',
+        subject: 'Private Channel A ticket',
+        category: 'GENERAL',
+        priority: 'MEDIUM',
+        userId: '550e8400-e29b-41d4-a716-446655440002',
+        channelId: channelAId,
+      },
+    })
+
+    const readResponse = await app.inject({
+      method: 'GET',
+      url: `/v1/support/tickets/${ticket.id}`,
+      headers: { authorization: `Bearer ${tokenB}` },
+    })
+
+    expect(readResponse.statusCode).toBe(403)
+
+    const replyResponse = await app.inject({
+      method: 'POST',
+      url: `/v1/support/tickets/${ticket.id}/messages`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: { content: 'Trying to access another branch ticket' },
+    })
+
+    expect(replyResponse.statusCode).toBe(403)
+  })
+
+  it('standard managers should NOT approve admin-only approval requests', async () => {
+    const approval = await prisma.managerApproval.create({
+      data: {
+        action: 'purchase_delete',
+        contextId: 'purchase-needing-admin',
+        channelId: channelBId,
+        requesterId: '550e8400-e29b-41d4-a716-446655440003',
+      },
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/users/approvals/${approval.id}/approve`,
+      headers: { authorization: `Bearer ${tokenB}` },
+      payload: {},
+    })
+
+    expect(response.statusCode).toBe(403)
   })
 })

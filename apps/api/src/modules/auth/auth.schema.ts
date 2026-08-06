@@ -9,7 +9,7 @@ export const registerSchema = z.object({
   username: z.string().min(3).max(50),
   email: z.string().email(),
   password: z.string().min(8).max(100),
-  role: z.enum(['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER', 'STOREKEEPER', 'PROMOTER', 'SALES_PERSON']),
+  role: z.enum(['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER', 'STOREKEEPER', 'PROMOTER', 'SALES_PERSON']),
   channelId: z.union([z.string().uuid(), z.null()]).optional(),
 })
 

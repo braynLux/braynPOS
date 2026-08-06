@@ -2,27 +2,28 @@ import type { FastifyPluginAsync } from 'fastify'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
+import { RATE } from '../../lib/rate-limit.plugin.js'
 import { z } from 'zod'
 
 // Shared instance - ideally would be in a service
 // Shared instance - using Gemini 2.5 Flash for superior reasoning and multimodal features
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '')
 const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' })
+const itemPromptSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  category: z.string().trim().max(80).optional(),
+  brand: z.string().trim().max(80).optional()
+})
 
 export const aiRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // POST /ai/generate-description
   app.post('/generate-description', {
+    config: RATE.APPROVAL,
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
-    const schema = z.object({
-      name: z.string().min(1),
-      category: z.string().optional(),
-      brand: z.string().optional()
-    })
-
-    const { name, category, brand } = schema.parse(request.body)
+    const { name, category, brand } = itemPromptSchema.parse(request.body)
 
     if (!process.env.GEMINI_API_KEY) {
       // Fallback if no key is found
@@ -51,18 +52,26 @@ export const aiRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /ai/batch-generate
   app.post('/batch-generate', {
+    config: RATE.APPROVAL,
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const schema = z.object({
-      items: z.array(z.object({
-        id: z.string(),
-        name: z.string(),
-        category: z.string().optional(),
-        brand: z.string().optional()
-      }))
+      items: z.array(itemPromptSchema.extend({
+        id: z.string().min(1).max(120),
+      })).min(1).max(10)
     })
 
     const { items } = schema.parse(request.body)
+
+    if (!process.env.GEMINI_API_KEY) {
+      return {
+        results: items.map(item => ({
+          id: item.id,
+          description: `High-quality ${item.name}${item.brand ? ` by ${item.brand}` : ''} for retail and inventory workflows.`,
+          isMock: true,
+        })),
+      }
+    }
     
     // In a real production app, we would use a queue (BullMQ is in package.json)
     // For this ERP modernization, we'll do a limited batch or suggest queue migration
@@ -77,20 +86,24 @@ export const aiRoutes: FastifyPluginAsync = async (app) => {
         }
     }))
 
-    return { results, note: items.length > 10 ? 'Limited to first 10 items for performance' : undefined }
+    return { results }
   })
 
   // POST /ai/generate-mockup
   app.post('/generate-mockup', {
+    config: RATE.APPROVAL,
     preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
-    const schema = z.object({
-      name: z.string().min(1),
-      category: z.string().optional(),
-      brand: z.string().optional()
-    })
+    const { name, category, brand } = itemPromptSchema.parse(request.body)
 
-    const { name, category, brand } = schema.parse(request.body)
+    if (!process.env.GEMINI_API_KEY) {
+      const keywords = encodeURIComponent(name.split(' ').slice(0, 3).join(','))
+      return {
+        imageUrl: `https://source.unsplash.com/800x800/?${keywords}`,
+        description: `Studio product mockup for ${name}${brand ? ` by ${brand}` : ''}.`,
+        isMock: true,
+      }
+    }
 
     try {
       // For Gemini 2.0, we use a prompt that encourages high-quality visual descriptions
@@ -110,7 +123,7 @@ export const aiRoutes: FastifyPluginAsync = async (app) => {
       // Since standard Gemini API (AI Studio) doesn't return raw images yet, 
       // we'll use a high-quality Unsplash source based on the AI's keywords
       const keywords = name.split(' ').slice(0, 3).join(',')
-      const mockUrl = `https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&q=80&w=800&q=${encodeURIComponent(keywords)}`
+      const mockUrl = `https://source.unsplash.com/800x800/?${encodeURIComponent(keywords)}`
       
       return { imageUrl: mockUrl, description: text }
     } catch (error) {

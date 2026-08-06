@@ -290,13 +290,13 @@ export default function POSPage() {
                 <div className="pos-qty-row">
                   <button
                     className="pos-qty-btn"
-                    onClick={() => updateQuantity(item.itemId, item.quantity - 1)}
+                    onClick={() => updateQuantity(item.itemId, item.quantity - 1, item.serialId)}
                     aria-label="Decrease quantity"
                   >−</button>
                   <span className="pos-qty-val">{item.quantity}</span>
                   <button
                     className="pos-qty-btn"
-                    onClick={() => updateQuantity(item.itemId, item.quantity + 1)}
+                    onClick={() => updateQuantity(item.itemId, item.quantity + 1, item.serialId)}
                     aria-label="Increase quantity"
                   >+</button>
 
@@ -326,7 +326,7 @@ export default function POSPage() {
                           className={`input pos-price-input ${statusClass} ${item.unitPrice < (saleType === 'WHOLESALE' ? item.minWholesalePrice : item.minRetailPrice) ? 'input-error' : ''}`}
                           value={item.unitPrice || ''}
                           onFocus={(e) => e.target.select()}
-                          onChange={(e) => updatePrice(item.itemId, Number(e.target.value))}
+                          onChange={(e) => updatePrice(item.itemId, Number(e.target.value), item.serialId)}
                           style={{ fontWeight: statusLabel ? 700 : 400 }}
                           aria-label="Unit price"
                         />
@@ -355,7 +355,7 @@ export default function POSPage() {
                 </div>
                 <button
                   className="pos-remove-btn"
-                  onClick={() => removeItem(item.itemId)}
+                  onClick={() => removeItem(item.itemId, item.serialId)}
                   aria-label={`Remove ${item.name}`}
                 >✕</button>
               </div>

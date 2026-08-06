@@ -2,7 +2,7 @@ import { prisma } from '../../lib/prisma.js'
 import { calculateNetSalary } from './payroll-calculator.service.js'
 import { buildPayrollJournalEntry } from '../../lib/ledger.js'
 import { buildCommissionPayout } from '../commission/commission.service.js'
-import { hashPassword, verifyPassword } from '../../lib/password.js'
+import { verifyPassword } from '../../lib/password.js'
 import { logAction, AUDIT } from '../../lib/audit.js'
 
 // Safe numeric conversion — mirrors the one in the calculator
@@ -13,8 +13,8 @@ function n(value: unknown, fallback = 0): number {
 }
 
 export class PayslipService {
-  async createSalaryRun(month: number, year: number, runBy: string, channelId?: string) {
-    const whereChannel = channelId ? { user: { channelId } } : {}
+  async createSalaryRun(month: number, year: number, runBy: string, channelId: string) {
+    const whereChannel = { user: { channelId } }
 
     const staffProfiles = await prisma.staffProfile.findMany({
       where: { ...whereChannel },
@@ -27,9 +27,17 @@ export class PayslipService {
 
     // ── Pre-fetch all rules once to avoid thousands of queries ───────
     const [allowanceRules, deductionRules] = await Promise.all([
-      prisma.allowanceRule.findMany({ where: { isActive: true } }),
+      prisma.allowanceRule.findMany({
+        where: {
+          isActive: true,
+          OR: [{ channelId }, { channelId: null }],
+        },
+      }),
       prisma.deductionRule.findMany({ 
-        where: { isActive: true }, 
+        where: {
+          isActive: true,
+          OR: [{ channelId }, { channelId: null }],
+        }, 
         include: { brackets: { orderBy: { incomeFrom: 'asc' } } } 
       }),
     ])
@@ -180,7 +188,7 @@ export class PayslipService {
     })
   }
 
-  async finalizeSalaryRun(salaryRunId: string, postedBy: string) {
+  async finalizeSalaryRun(salaryRunId: string, postedBy: string, actorRole = 'MANAGER') {
     return prisma.$transaction(async (tx) => {
       const run = await tx.salaryRun.findUniqueOrThrow({
         where:   { id: salaryRunId },
@@ -213,7 +221,7 @@ export class PayslipService {
       logAction({
         action:     AUDIT.PAYROLL_RUN_FINALIZE,
         actorId:    postedBy,
-        actorRole:  'MANAGER', // Finalize requires elevation
+        actorRole,
         channelId:  run.channelId || undefined,
         targetType: 'SalaryRun',
         targetId:   salaryRunId,
@@ -333,7 +341,7 @@ export class PayslipService {
     if (!isValid) throw { statusCode: 401, message: 'Invalid password. Action denied.' }
   }
 
-  async deleteSalaryRun(id: string, userId: string, password?: string) {
+  async deleteSalaryRun(id: string, userId: string, password?: string, actorRole = 'MANAGER') {
     await this.verifyUserPassword(userId, password)
     return prisma.$transaction(async (tx) => {
       const run = await tx.salaryRun.findUniqueOrThrow({ where: { id } })
@@ -358,7 +366,7 @@ export class PayslipService {
       logAction({
         action:     AUDIT.PAYROLL_RUN_DELETE,
         actorId:    userId,
-        actorRole:  'MANAGER',
+        actorRole,
         channelId:  run.channelId || undefined,
         targetType: 'SalaryRun',
         targetId:   id,
@@ -368,7 +376,7 @@ export class PayslipService {
     })
   }
 
-  async reverseSalaryRun(id: string, userId: string, password?: string) {
+  async reverseSalaryRun(id: string, userId: string, password?: string, actorRole = 'MANAGER') {
     await this.verifyUserPassword(userId, password)
     return prisma.$transaction(async (tx) => {
       const run = await tx.salaryRun.findUniqueOrThrow({ where: { id } })
@@ -434,7 +442,7 @@ export class PayslipService {
       logAction({
         action:     AUDIT.PAYROLL_RUN_REVERSE,
         actorId:    userId,
-        actorRole:  'MANAGER',
+        actorRole,
         channelId:  run.channelId || undefined,
         targetType: 'SalaryRun',
         targetId:   id,

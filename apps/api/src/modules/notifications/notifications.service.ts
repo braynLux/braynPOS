@@ -1,9 +1,10 @@
-import { prisma } from '../../lib/prisma.js'
+import { basePrisma, prisma } from '../../lib/prisma.js'
 import { WhatsAppService } from '../support/whatsapp.service.js'
 import { settingsService } from '../dashboard/settings.service.js'
 import { logger } from '../../lib/logger.js'
 
 let io: any = null
+const GLOBAL_NOTIFICATION_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
 
 export function setNotificationIo(socketIo: any) {
   io = socketIo
@@ -71,17 +72,31 @@ export class NotificationService {
     }
   }
 
-  static async markAsRead(id: string) {
-    return prisma.notification.update({
+  static async markAsRead(id: string, actorRole: string, actorChannelId?: string | null) {
+    const notification = await basePrisma.notification.findUnique({
+      where:  { id },
+      select: { id: true, channelId: true },
+    })
+
+    if (!notification) {
+      throw { statusCode: 404, message: 'Notification not found' }
+    }
+
+    const isGlobalRole = GLOBAL_NOTIFICATION_ROLES.includes(actorRole)
+    if (!isGlobalRole && (!actorChannelId || notification.channelId !== actorChannelId)) {
+      throw { statusCode: 404, message: 'Notification not found' }
+    }
+
+    return basePrisma.notification.update({
       where: { id },
       data:  { isRead: true },
     })
   }
 
-  static async getHistory(channelId: string | null, page = 1, limit = 20) {
+  static async getHistory(channelId?: string | null, page = 1, limit = 20) {
      const skip = (page - 1) * limit
-     return prisma.notification.findMany({
-       where: { channelId },
+     return basePrisma.notification.findMany({
+       where: channelId === undefined ? {} : { channelId },
        orderBy: { createdAt: 'desc' },
        take: limit,
        skip,

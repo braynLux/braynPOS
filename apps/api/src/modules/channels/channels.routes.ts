@@ -51,17 +51,23 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
     preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
+    if (request.user.role === 'MANAGER' && id !== request.user.channelId) {
+      throw { statusCode: 403, message: 'You can only view your assigned channel' }
+    }
     return channelsService.findById(id)
   })
 
   // POST /channels
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body              = createChannelSchema.parse(request.body)
     const { approvalToken } = z.object({ approvalToken: z.string().optional() }).parse(request.body)
 
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (!approvalToken) {
         const approval = await prisma.managerApproval.create({
           data: {
@@ -78,7 +84,9 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
           message:   'An approval request has been sent to the Administrator Manager.',
         })
       }
-      const approved = await validateApprovalToken(approvalToken, 'channel_create', 'new_channel')
+      const approved = await validateApprovalToken(
+        approvalToken, 'channel_create', 'new_channel', request.user.channelId
+      )
       if (!approved) return reply.status(403).send({ error: 'Invalid or expired Administrator Manager approval' })
     }
 
@@ -88,13 +96,16 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /channels/:id
   app.patch('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }            = request.params as { id: string }
     const body              = updateChannelSchema.parse(request.body)
     const { approvalToken } = z.object({ approvalToken: z.string().optional() }).parse(request.body)
 
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (!approvalToken) {
         const approval = await prisma.managerApproval.create({
           data: {
@@ -110,7 +121,9 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
           message:   'An approval request has been sent to the Administrator Manager.',
         })
       }
-      const approved = await validateApprovalToken(approvalToken, 'channel_update', id)
+      const approved = await validateApprovalToken(
+        approvalToken, 'channel_update', id, request.user.channelId
+      )
       if (!approved) return reply.status(403).send({ error: 'Invalid or expired Administrator Manager approval' })
     }
 
@@ -119,7 +132,7 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
 
   // DELETE /channels/:id
   app.delete('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }                   = request.params as { id: string }
     const { password, approvalToken } = z.object({
@@ -128,6 +141,9 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
     }).parse(request.body)
 
     if (request.user.role === 'MANAGER') {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
       if (!approvalToken) {
         const approval = await prisma.managerApproval.create({
           data: {
@@ -143,7 +159,9 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
           message:   'An approval request has been sent to the Administrator Manager.',
         })
       }
-      const approved = await validateApprovalToken(approvalToken, 'channel_delete', id)
+      const approved = await validateApprovalToken(
+        approvalToken, 'channel_delete', id, request.user.channelId
+      )
       if (!approved) return reply.status(403).send({ error: 'Invalid or expired Administrator Manager approval' })
     }
 

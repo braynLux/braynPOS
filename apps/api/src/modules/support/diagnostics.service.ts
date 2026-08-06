@@ -1,5 +1,5 @@
 import { prisma } from '../../lib/prisma.js'
-import { Decimal } from '@prisma/client/runtime/library'
+import { Prisma } from '@prisma/client'
 
 export interface DiagnosticResult {
   status: 'HEALTHY' | 'DEGRADED' | 'CRITICAL'
@@ -110,21 +110,19 @@ export class DiagnosticsService {
     // error 42601 (syntax error at or near "$1"). Switched to $queryRawUnsafe
     // with explicit manual query construction to avoid this.
     try {
-      const whereClause = channelId
-        ? `WHERE b."channelId" = '${channelId.replace(/'/g, "''")}' AND m."channelId" = '${channelId.replace(/'/g, "''")}'`
-        : ''
+      const channelFilter = channelId
+        ? Prisma.sql`WHERE b."channelId" = ${channelId} AND m."channelId" = ${channelId}`
+        : Prisma.empty
 
-      const sql = `
+      const discrepancies = await prisma.$queryRaw<any[]>`
         SELECT b."itemId", b."availableQty", SUM(m."quantityChange") as "movementSum"
         FROM inventory_balances b
         JOIN stock_movements m ON b."itemId" = m."itemId" AND b."channelId" = m."channelId"
-        ${whereClause}
+        ${channelFilter}
         GROUP BY b."itemId", b."availableQty", b."channelId"
         HAVING b."availableQty" != SUM(m."quantityChange")::integer
         LIMIT 5
       `
-
-      const discrepancies = await prisma.$queryRawUnsafe<any[]>(sql)
 
       if (discrepancies.length > 0) {
         return {
@@ -142,7 +140,7 @@ export class DiagnosticsService {
         message: 'Inventory records match movement history.'
       }
     } catch (err: any) {
-      return { status: 'PASS' as const, message: 'Structural check bypassed.' }
+      return { status: 'FAIL' as const, message: 'Inventory integrity check failed: ' + err.message }
     }
   }
 }

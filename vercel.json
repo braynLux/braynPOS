@@ -6,7 +6,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://REPLACE_WITH_RAILWAY_URL/v1/:path*"
+      "destination": "https://api-production-f729.up.railway.app/v1/:path*"
     }
   ]
 }

@@ -23,6 +23,9 @@ export function setupInventorySocket(io: Server) {
       if (decoded.channelId) {
         socket.join(`channel:${decoded.channelId}`)
       }
+      if (['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(decoded.role)) {
+        socket.join('channel:HQ')
+      }
     } catch {
       socket.disconnect()
       return

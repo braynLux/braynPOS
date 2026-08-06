@@ -148,7 +148,7 @@ export function SyncConflictResolver() {
 
       <div style={{ marginTop: 24, padding: 16, background: 'rgba(245,158,11,0.05)', borderRadius: 8, border: '1px solid rgba(245,158,11,0.2)', fontSize: '0.85rem' }}>
         <strong>💡 Manager Note:</strong> 
-        "Force Sync" trusts the physical sale over the digital count. It will bypass stock checks and serial availability to ensure financial records match physical reality, automatically creating a forensic audit trail of the override.
+        &quot;Force Sync&quot; trusts the physical sale over the digital count. It will bypass stock checks and serial availability to ensure financial records match physical reality, automatically creating a forensic audit trail of the override.
       </div>
     </div>
   )

@@ -8,7 +8,8 @@ import { useAuthStore } from '@/stores/auth.store'
 
 interface Item { id: string; name: string; sku: string; weightedAvgCost: number }
 interface Supplier { id: string; name: string }
-interface LPO { id: string; orderNo: string; supplierId: string; lines: any[] }
+interface Channel { id: string; name: string }
+interface LPO { id: string; orderNo: string; supplierId: string; channelId?: string; channel?: Channel; lines: any[] }
 
 export default function NewPurchasePage() {
   const router = useRouter()
@@ -20,6 +21,8 @@ export default function NewPurchasePage() {
 
   const [items, setItems] = useState<Item[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState('')
   const [lpos, setLpos] = useState<LPO[]>([])
   const [loading, setLoading] = useState(false)
   const [itemSearch, setItemSearch] = useState<string[]>([]) // For filtering item selects
@@ -33,6 +36,7 @@ export default function NewPurchasePage() {
   const [lpoId, setLpoId] = useState(preFilledLpoId || '')
   const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<{ id: string; itemId: string; quantity: number; unitCost: number; retailPrice: number; wholesalePrice: number; search: string; items: Item[]; serialNumbers?: string; isSerialized?: boolean }[]>([])
+  const canChooseChannel = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
 
   const searchItems = async (index: number, query: string) => {
     if (!token || query.length < 2) return
@@ -53,21 +57,29 @@ export default function NewPurchasePage() {
     
     const fetchData = async () => {
       try {
-        const [itemsRes, suppRes, lposRes] = await Promise.all([
+        const [itemsRes, suppRes, lposRes, channelsRes] = await Promise.all([
           api.get<{ data: Item[] }>('/items?limit=100', token),
           api.get<Supplier[]>('/items/suppliers', token),
-          api.get<{ data: LPO[] }>('/purchases/lpo?limit=100', token).catch(() => ({ data: [] }))
+          api.get<{ data: LPO[] }>('/purchases/lpo?limit=100', token).catch(() => ({ data: [] })),
+          canChooseChannel ? api.get<Channel[]>('/channels', token) : Promise.resolve([]),
         ])
         
         setItems(itemsRes.data)
         setSuppliers(suppRes)
         setLpos(lposRes.data || [])
+        setChannels(channelsRes)
+
+        if (!selectedChannelId) {
+          const defaultChannel = user?.channelId || channelsRes[0]?.id || ''
+          if (defaultChannel) setSelectedChannelId(defaultChannel)
+        }
 
         if (preFilledLpoId) {
           const lpoDetails = await api.get<LPO>(`/purchases/lpo/${preFilledLpoId}`, token)
           if (lpoDetails) {
             setSupplierId(lpoDetails.supplierId)
             setLpoId(lpoDetails.id)
+            setSelectedChannelId(lpoDetails.channelId || lpoDetails.channel?.id || selectedChannelId)
             setLines(lpoDetails.lines.map((l: any) => ({
               id: Math.random().toString(36).slice(2),
               itemId: l.itemId,
@@ -88,7 +100,7 @@ export default function NewPurchasePage() {
     }
 
     fetchData()
-  }, [token, preFilledLpoId])
+  }, [token, preFilledLpoId, canChooseChannel, selectedChannelId, user?.channelId])
 
   const handleQuickSup = async () => {
     if (!quickSupName.trim()) return
@@ -142,6 +154,8 @@ export default function NewPurchasePage() {
     if (invalidLines.length > 0) return toast.error('Error: At least one line has no item selected.')
     if (!supplierId) return toast.error('Error: Please select a supplier.')
     if (lines.length === 0) return toast.error('Error: Please add at least one line item.')
+    const channelId = canChooseChannel ? selectedChannelId : user?.channelId
+    if (!channelId) return toast.error('Error: Please select a channel.')
 
     // Serial number validation
     for (const line of lines) {
@@ -158,7 +172,7 @@ export default function NewPurchasePage() {
     try {
       await api.post('/purchases/commit', {
         supplierId,
-        channelId: user?.channelId,
+        channelId,
         purchaseOrderId: lpoId || undefined,
         lines: lines.map(l => ({ 
           itemId: l.itemId, 
@@ -192,6 +206,15 @@ export default function NewPurchasePage() {
 
       <form onSubmit={handleCommit} className="card" style={{ padding: 24, maxWidth: 800 }}>
         <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
+          {canChooseChannel && (
+            <div className="form-group" style={{ flex: 1 }}>
+              <label>Channel</label>
+              <select className="input" value={selectedChannelId} onChange={e => setSelectedChannelId(e.target.value)} required>
+                <option value="">Select Channel...</option>
+                {channels.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
+              </select>
+            </div>
+          )}
           <div className="form-group" style={{ flex: 1 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
               <label style={{ marginBottom: 0 }}>Supplier</label>
@@ -349,4 +372,3 @@ export default function NewPurchasePage() {
     </div>
   )
 }
-

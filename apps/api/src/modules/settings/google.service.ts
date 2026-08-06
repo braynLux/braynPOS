@@ -1,5 +1,34 @@
 import { google } from 'googleapis'
 import { prisma } from '../../lib/prisma.js'
+import { createHmac, timingSafeEqual } from 'crypto'
+
+const STATE_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me'
+
+function signState(userId: string) {
+  const payload = Buffer.from(JSON.stringify({ userId, issuedAt: Date.now() })).toString('base64url')
+  const signature = createHmac('sha256', STATE_SECRET).update(payload).digest('base64url')
+  return `${payload}.${signature}`
+}
+
+function verifyState(state: string) {
+  const [payload, signature] = state.split('.')
+  if (!payload || !signature) {
+    throw { statusCode: 400, message: 'Invalid OAuth state' }
+  }
+
+  const expected = createHmac('sha256', STATE_SECRET).update(payload).digest('base64url')
+  const actualBuffer = Buffer.from(signature)
+  const expectedBuffer = Buffer.from(expected)
+  if (actualBuffer.length !== expectedBuffer.length || !timingSafeEqual(actualBuffer, expectedBuffer)) {
+    throw { statusCode: 400, message: 'Invalid OAuth state signature' }
+  }
+
+  const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { userId?: string; issuedAt?: number }
+  if (!parsed.userId || !parsed.issuedAt || Date.now() - parsed.issuedAt > 10 * 60 * 1000) {
+    throw { statusCode: 400, message: 'Expired OAuth state' }
+  }
+  return parsed.userId
+}
 
 export class GoogleService {
   private oauth2Client
@@ -12,7 +41,7 @@ export class GoogleService {
     )
   }
 
-  getAuthUrl(channelId: string) {
+  getAuthUrl(userId: string) {
     const scopes = [
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/drive.file',
@@ -24,11 +53,12 @@ export class GoogleService {
       access_type: 'offline',
       prompt: 'consent',
       scope: scopes,
-      state: channelId, // Pass channelId as state to know who is authenticating
+      state: signState(userId),
     })
   }
 
-  async handleCallback(code: string, channelId: string) {
+  async handleCallback(code: string, state: string) {
+    const userId = verifyState(state)
     const { tokens } = await this.oauth2Client.getToken(code)
     
     this.oauth2Client.setCredentials(tokens)
@@ -38,9 +68,6 @@ export class GoogleService {
     // Assuming we attach the Google Account to the Channel
     // As per the schema update, it was added to User. I'll update the User.
     const userEmail = userInfo.data.email || ''
-
-    // The state parameter passed in 'getAuthUrl' can be the userId instead of channelId.
-    const userId = channelId 
 
     await prisma.user.update({
       where: { id: userId },

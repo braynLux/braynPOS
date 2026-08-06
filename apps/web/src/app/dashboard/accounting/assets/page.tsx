@@ -16,14 +16,18 @@ interface FixedAsset {
   bookValue:        number
   notes?:           string
 }
+interface Channel { id: string; name: string }
 
 export default function FixedAssetsPage() {
   const token = useAuthStore(s => s.accessToken)
   const user = useAuthStore(s => s.user)
   const [assets, setAssets] = useState<FixedAsset[]>([])
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [selectedChannelId, setSelectedChannelId] = useState(user?.channelId || '')
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
+  const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(user?.role || '')
   
   const [form, setForm] = useState({
     name: '',
@@ -38,12 +42,29 @@ export default function FixedAssetsPage() {
 
   useEffect(() => {
     if (!token) return
+    if (isHQ) {
+      api.get<Channel[]>('/channels', token)
+        .then(res => {
+          const list = Array.isArray(res) ? res : [res as unknown as Channel]
+          setChannels(list)
+          setSelectedChannelId(prev => prev || user?.channelId || list[0]?.id || '')
+        })
+        .catch(console.error)
+    } else {
+      setSelectedChannelId(user?.channelId || '')
+    }
+  }, [token, isHQ, user?.channelId])
+
+  useEffect(() => {
+    if (!token) return
+    if (isHQ && !selectedChannelId) return
     fetchAssets()
-  }, [token])
+  }, [token, isHQ, selectedChannelId])
 
   const fetchAssets = async () => {
     try {
-      const res = await api.get<FixedAsset[]>('/accounting/assets', token!)
+      const query = isHQ && selectedChannelId ? `?channelId=${selectedChannelId}` : ''
+      const res = await api.get<FixedAsset[]>(`/accounting/assets${query}`, token!)
       setAssets(res)
     } catch (err) {
       console.error(err)
@@ -54,16 +75,18 @@ export default function FixedAssetsPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
+    const channelId = isHQ ? selectedChannelId : user?.channelId
+    if (!channelId) return toast.error('Select a channel before registering an asset')
     setSaving(true)
     try {
-      await api.post('/accounting/assets', form, token!)
+      await api.post('/accounting/assets', { ...form, channelId }, token!)
       toast.success('Asset registered successfully')
       setShowAdd(false)
       fetchAssets()
       setForm({
         name: '', code: '', category: 'GENERAL',
         purchaseDate: new Date().toISOString().split('T')[0],
-        purchasePrice: 0, depreciationRate: 12.5, channelId: user?.channelId || '', notes: ''
+        purchasePrice: 0, depreciationRate: 12.5, channelId, notes: ''
       })
     } catch (err) {
       toast.error('Failed: ' + (err as Error).message)
@@ -90,6 +113,14 @@ export default function FixedAssetsPage() {
           <div className="card" style={{ maxWidth: 500, width: '100%', padding: 24 }}>
             <h2 style={{ marginBottom: 20 }}>Register New Asset</h2>
             <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {isHQ && (
+                <div className="form-group">
+                  <label>Channel *</label>
+                  <select className="input" required value={selectedChannelId} onChange={e => setSelectedChannelId(e.target.value)}>
+                    {channels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+              )}
               <div className="form-group">
                 <label>Asset Name *</label>
                 <input className="input" required value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="e.g. Delivery Van KCA 123X" />

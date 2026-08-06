@@ -36,8 +36,9 @@ export class MarginCorrectionService {
     newRetail?:  number
     repairRecentSales?: boolean
     actorId:     string
+    actorRole:   string
   }) {
-    const { itemId, channelId, newCost, newRetail, repairRecentSales, actorId } = data
+    const { itemId, channelId, newCost, newRetail, repairRecentSales, actorId, actorRole } = data
 
     return prisma.$transaction(async (tx) => {
       // 1. Update the Inventory Balance (The source of truth for future sales)
@@ -88,9 +89,9 @@ export class MarginCorrectionService {
       }
 
       logAction({
-        action:     'MARGIN_REPAIR',
+        action:     AUDIT.MARGIN_REPAIR,
         actorId:    actorId,
-        actorRole:  'MANAGER',
+        actorRole,
         channelId:  channelId,
         targetType: 'Item',
         targetId:   itemId,

@@ -45,6 +45,10 @@ export async function calculateNetSalary(
     }
   }
 
+  const channelRuleScope = profile.user.channelId
+    ? { OR: [{ channelId: profile.user.channelId }, { channelId: null }] }
+    : { channelId: null }
+
   // ── Fetch allowances ──────────────────────────────────────────────
   const allowanceRules = prefetchedRules 
     ? prefetchedRules.allowanceRules.filter(r => 
@@ -53,9 +57,14 @@ export async function calculateNetSalary(
     : await prisma.allowanceRule.findMany({
         where: {
           isActive: true,
-          OR: [
-            { appliesToJobLevelId: profile.jobLevelId },
-            { appliesToJobLevelId: null },
+          AND: [
+            channelRuleScope,
+            {
+              OR: [
+                { appliesToJobLevelId: profile.jobLevelId },
+                { appliesToJobLevelId: null },
+              ],
+            },
           ],
         },
       })
@@ -85,9 +94,14 @@ export async function calculateNetSalary(
     : await prisma.deductionRule.findMany({
         where: {
           isActive: true,
-          OR: [
-            { appliesToJobLevelId: profile.jobLevelId },
-            { appliesToJobLevelId: null },
+          AND: [
+            channelRuleScope,
+            {
+              OR: [
+                { appliesToJobLevelId: profile.jobLevelId },
+                { appliesToJobLevelId: null },
+              ],
+            },
           ],
         },
         orderBy: { calculationSequence: 'asc' },

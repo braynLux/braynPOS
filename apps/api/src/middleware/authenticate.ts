@@ -60,7 +60,7 @@ export async function authenticate(
     // ── FIX 2: Block temp MFA tokens from all routes except /mfa/verify
     // Without this, mfaVerified: false tokens can call any endpoint.
     if (payload.mfaVerified === false) {
-      const path = request.routerPath ?? request.raw.url ?? ''
+      const path = request.routeOptions.url ?? request.raw.url ?? ''
       if (!MFA_EXEMPT_PATHS.has(path)) {
         reply.status(403).send({
           error:   'MFA verification required',

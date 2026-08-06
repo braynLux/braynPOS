@@ -43,6 +43,47 @@ export class PurchaseService {
     const landedCostTotal = data.landedCosts?.reduce((s, l) => s + l.amount, 0) ?? 0
 
     return prisma.$transaction(async (tx) => {
+      const supplier = await tx.supplier.findUnique({
+        where:  { id: data.supplierId },
+        select: { channelId: true, deletedAt: true },
+      })
+      if (!supplier || supplier.deletedAt) {
+        throw { statusCode: 404, message: 'Supplier not found' }
+      }
+      if (supplier.channelId && supplier.channelId !== data.channelId) {
+        throw { statusCode: 403, message: 'Supplier does not belong to the purchase channel' }
+      }
+
+      if (data.purchaseOrderId) {
+        const order = await tx.purchaseOrder.findUnique({
+          where:  { id: data.purchaseOrderId },
+          select: { channelId: true, status: true },
+        })
+        if (!order) {
+          throw { statusCode: 404, message: 'Purchase order not found' }
+        }
+        if (order.channelId !== data.channelId) {
+          throw { statusCode: 403, message: 'Purchase order does not belong to the purchase channel' }
+        }
+        if (['CANCELLED', 'FULFILLED'].includes(order.status)) {
+          throw { statusCode: 400, message: `Cannot receive against a ${order.status.toLowerCase()} purchase order` }
+        }
+
+        const orderLines = await tx.lpoLine.findMany({
+          where: { purchaseOrderId: data.purchaseOrderId },
+        })
+        const orderLineByItem = new Map(orderLines.map(line => [line.itemId, line]))
+        for (const line of data.lines) {
+          const orderLine = orderLineByItem.get(line.itemId)
+          if (!orderLine) {
+            throw { statusCode: 422, message: `Item ${line.itemId} is not part of this purchase order` }
+          }
+          if (orderLine.receivedQty + line.quantity > orderLine.quantity) {
+            throw { statusCode: 422, message: `Received quantity for item ${line.itemId} exceeds the ordered quantity` }
+          }
+        }
+      }
+
       const purchase = await tx.purchase.create({
         data: {
           purchaseNo,
@@ -256,10 +297,10 @@ export class PurchaseService {
     })
   }
 
-  async softDelete(id: string, channelId: string, deletedBy: string) {
+  async softDelete(id: string, channelId: string | undefined, deletedBy: string) {
     return prisma.$transaction(async (tx) => {
       const purchase = await tx.purchase.findFirstOrThrow({
-        where: { id, channelId },
+        where: { id, ...(channelId && { channelId }) },
         include: { lines: true }
       })
 

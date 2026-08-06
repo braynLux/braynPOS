@@ -7,21 +7,29 @@ import { z } from 'zod'
 export const templatesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
+  const isHQRole = (role: string) => ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(role)
+
   app.get('/', async (request) => {
-    const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)
+    const isHQ = isHQRole(request.user.role)
     const channelId = request.user.channelId
-    return templatesService.findAll(isHQ ? undefined : (channelId || undefined))
+    if (!isHQ && !channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+    return templatesService.findAll(isHQ ? undefined : channelId!)
   })
   
   app.get('/:id', async (request) => {
-    const { id } = request.params as { id: string }
-    const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
+    const isHQ = isHQRole(request.user.role)
     const channelId = request.user.channelId
-    return templatesService.findById(id, isHQ ? undefined : (channelId || undefined))
+    if (!isHQ && !channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+    return templatesService.findById(id, isHQ ? undefined : channelId!)
   })
 
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request, reply) => {
     const body = z.object({
       name: z.string().min(1),
@@ -36,18 +44,21 @@ export const templatesRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.patch('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN')],
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
-    const { id } = request.params as { id: string }
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const body = z.object({
       name: z.string().optional(),
       content: z.string().optional(),
       isActive: z.boolean().optional(),
     }).parse(request.body)
     
-    const isHQ = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)
+    const isHQ = isHQRole(request.user.role)
     const channelId = request.user.channelId
+    if (!isHQ && !channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
     
-    return templatesService.update(id, isHQ ? '' : (channelId || ''), body)
+    return templatesService.update(id, isHQ ? undefined : channelId!, body)
   })
 }

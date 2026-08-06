@@ -1,6 +1,6 @@
 FROM node:20-bookworm AS base
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN corepack enable && corepack prepare pnpm@10.32.0 --activate
 
 FROM base AS builder
 # FORCE COMPLETE REBUILD: 2026-03-26T11:35:00

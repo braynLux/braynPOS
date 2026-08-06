@@ -1,4 +1,4 @@
-import { prisma } from '../../lib/prisma.js'
+import { basePrisma, prisma } from '../../lib/prisma.js'
 import { logAction, AUDIT } from '../../lib/audit.js'
 
 export class SessionsService {
@@ -16,7 +16,7 @@ export class SessionsService {
 
     // FIX 4: Audit log session openings
     logAction({
-      action:     AUDIT.SESSION_CLOSE ?? 'session.open', // Use separate constant if needed
+      action:     AUDIT.SESSION_OPEN,
       actorId:    userId,
       actorRole,
       channelId,
@@ -77,7 +77,7 @@ export class SessionsService {
 
     // FIX 4: Audit log session closures with variance
     logAction({
-      action:     AUDIT.SESSION_CLOSE ?? 'session.close',
+      action:     AUDIT.SESSION_CLOSE,
       actorId,
       actorRole,
       channelId:  session.channelId,
@@ -90,7 +90,7 @@ export class SessionsService {
   }
 
   async findById(id: string) {
-    return prisma.salesSession.findUniqueOrThrow({
+    return basePrisma.salesSession.findUniqueOrThrow({
       where:   { id },
       include: {
         user: { select: { id: true, username: true } },

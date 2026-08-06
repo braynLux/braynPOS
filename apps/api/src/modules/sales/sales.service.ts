@@ -64,8 +64,45 @@ async function commitSaleOnce(
   }
 ) {
   return prisma.$transaction(async (tx) => {
+    if (!input.channelId) {
+      throw { statusCode: 400, message: 'channelId is required for sale commit' }
+    }
+
+    if (input.customerId) {
+      const customer = await tx.customer.findUnique({
+        where:  { id: input.customerId },
+        select: { channelId: true },
+      })
+      if (!customer) {
+        throw { statusCode: 404, message: 'Customer not found' }
+      }
+      if (customer.channelId && customer.channelId !== input.channelId) {
+        throw { statusCode: 403, message: 'Customer does not belong to the sale channel' }
+      }
+    }
+
+    if (input.sessionId) {
+      const session = await tx.salesSession.findUnique({
+        where:  { id: input.sessionId },
+        select: { channelId: true, status: true },
+      })
+      if (!session) {
+        throw { statusCode: 404, message: 'Sales session not found' }
+      }
+      if (session.channelId !== input.channelId) {
+        throw { statusCode: 403, message: 'Sales session does not belong to the sale channel' }
+      }
+      if (session.status !== 'OPEN') {
+        throw { statusCode: 400, message: 'Sales session is not open' }
+      }
+    }
+
     const itemIds       = [...new Set(input.items.map(l => l.itemId))]
     const sortedItemIds = itemIds.sort()
+    const requestedQtyByItem = input.items.reduce((map, line) => {
+      map.set(line.itemId, (map.get(line.itemId) ?? 0) + line.quantity)
+      return map
+    }, new Map<string, number>())
     await tx.$executeRaw`SET LOCAL lock_timeout = '3000ms'`
 
     const lockedBalances = await tx.$queryRaw<
@@ -96,11 +133,12 @@ async function commitSaleOnce(
       const effectiveCost = Number(balance?.weightedAvgCost ?? item.weightedAvgCost ?? 0)
       itemDetails[line.itemId] = { ...item, effectiveCost }
 
-      const currentQty = stockMap[line.itemId] ?? 0
+      const currentQty   = stockMap[line.itemId] ?? 0
+      const requestedQty = requestedQtyByItem.get(line.itemId) ?? line.quantity
       const isProduct = itemDetails[line.itemId].type === 'PRODUCT'
 
-      if (!options?.skipStockCheck && isProduct && currentQty < line.quantity) {
-        throw { statusCode: 422, message: `Insufficient stock for ${item.name}. Available: ${currentQty}` }
+      if (!options?.skipStockCheck && isProduct && currentQty < requestedQty) {
+        throw { statusCode: 422, message: `Insufficient stock for ${item.name}. Requested: ${requestedQty}, available: ${currentQty}` }
       }
 
       if (Number(line.unitPrice) < Number(item.minRetailPrice)) {
@@ -150,12 +188,27 @@ async function commitSaleOnce(
       }
 
       const lineTotal    = line.quantity * Number(line.unitPrice)
+      if ((line.discountAmount ?? 0) > lineTotal) {
+        throw { statusCode: 422, message: `Discount for ${item.name} cannot exceed the line total` }
+      }
       totalAmount   += lineTotal
       totalDiscount += line.discountAmount ?? 0
       totalCost     += effectiveCost * line.quantity
     }
 
     const netAmount = totalAmount - totalDiscount
+    if (netAmount < 0) {
+      throw { statusCode: 422, message: 'Discount cannot exceed the sale total' }
+    }
+
+    const paymentTotal = input.payments.reduce((sum, pmt) => sum + Number(pmt.amount), 0)
+    if (Math.abs(paymentTotal - netAmount) > 0.0001) {
+      throw {
+        statusCode: 422,
+        message: `Payment total (${paymentTotal.toFixed(2)}) must match sale net amount (${netAmount.toFixed(2)})`,
+      }
+    }
+
     const newSale = await tx.sale.create({
       data: {
         receiptNo,
@@ -321,12 +374,15 @@ export async function findSales(query: any, actor?: TokenPayload) {
   const limit = Math.min(query.limit ?? 25, 100)
   const skip  = (page - 1) * limit
   const isAdmin = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actor?.role || '')
+  if (!isAdmin && !actor?.channelId) {
+    throw { statusCode: 400, message: 'Your account has no channel assigned' }
+  }
 
   const where: Prisma.SaleWhereInput = {
     deletedAt: null,
-    ...(query.channelId ? {
-      channelId: (isAdmin || query.channelId === actor?.channelId) ? query.channelId : (actor?.channelId || 'none')
-    } : (isAdmin ? {} : { channelId: actor?.channelId || 'none' })),
+    ...(isAdmin
+      ? (query.channelId ? { channelId: query.channelId } : {})
+      : { channelId: actor!.channelId! }),
     ...(query.saleType    && { saleType:    query.saleType }),
     ...(query.customerId  && { customerId:  query.customerId }),
     ...(query.sessionId   && { sessionId:   query.sessionId }),
@@ -416,10 +472,18 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
 
     const actor = await tx.user.findUniqueOrThrow({
       where:  { id: actorId },
-      select: { passwordHash: true, role: true },
+      select: { passwordHash: true, role: true, channelId: true },
     })
 
     const bypassPassword = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actor.role)
+    if (!bypassPassword) {
+      if (!actor.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      if (sale.channelId !== actor.channelId) {
+        throw { statusCode: 403, message: 'You can only reverse sales for your assigned channel' }
+      }
+    }
     if (!bypassPassword) {
       const isValid = managerPassword ? await verifyPassword(actor.passwordHash, managerPassword) : false
       if (!isValid) throw { statusCode: 403, message: 'Invalid manager password' }
@@ -470,6 +534,19 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
  * physically gone. We just need to record the financial/ledger impact.
  */
 export async function syncOfflineSale(payload: any, actor: TokenPayload, idempotencyKey: string) {
+  const isAdmin = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actor.role)
+  if (!payload?.saleData?.channelId) {
+    throw { statusCode: 400, message: 'channelId is required for offline sale sync' }
+  }
+  if (!isAdmin) {
+    if (!actor.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+    if (payload.saleData.channelId !== actor.channelId) {
+      throw { statusCode: 403, message: 'You can only sync sales for your assigned channel' }
+    }
+  }
+
   // 1. Check if we already processed this
   const cached = await checkIdempotency(idempotencyKey)
   if (cached) return cached.responseBody
@@ -533,11 +610,27 @@ export class SalesService {
       const conflictFiltered = await (tx as any).syncConflict.findUniqueOrThrow({ 
         where: { id: conflictId } 
       })
+      const isAdmin = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actor.role)
+      if (!isAdmin) {
+        if (!actor.channelId) {
+          throw { statusCode: 400, message: 'Your account has no channel assigned' }
+        }
+        if (conflictFiltered.channelId !== actor.channelId) {
+          throw { statusCode: 403, message: 'You can only resolve conflicts for your assigned channel' }
+        }
+      }
+      const conflictPayload = conflictFiltered.salePayload as any
+      if (conflictPayload?.saleData) {
+        conflictPayload.saleData = {
+          ...conflictPayload.saleData,
+          channelId: conflictFiltered.channelId,
+        }
+      }
 
       if (action === 'FORCE_SYNC') {
-        const sale = await commitSale(conflictFiltered.salePayload.saleData, actor, {
-          offlineReceiptNo: conflictFiltered.salePayload.offlineReceiptNo,
-          deviceDate:       conflictFiltered.salePayload.deviceDate,
+        const sale = await commitSale(conflictPayload.saleData, actor, {
+          offlineReceiptNo: conflictPayload.offlineReceiptNo,
+          deviceDate:       conflictPayload.deviceDate,
           skipStockCheck:   true 
         })
 
