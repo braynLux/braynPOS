@@ -8,9 +8,11 @@ const prisma = new PrismaClient()
 // MUST use these stable IDs — referenced in lib/ledger.ts
 const SYSTEM_ACCOUNTS = [
   { id: 'acc-1010', code: '1010', name: 'Cash on Hand',              type: 'ASSET' as const,     isSystem: true },
+  { id: 'acc-1020', code: '1020', name: 'Bank Account',              type: 'ASSET' as const,     isSystem: true },
   { id: 'acc-1200', code: '1200', name: 'Accounts Receivable',       type: 'ASSET' as const,     isSystem: true },
   { id: 'acc-1500', code: '1500', name: 'Inventory Valuation',       type: 'ASSET' as const,     isSystem: true },
   { id: 'acc-2000', code: '2000', name: 'Accounts Payable',          type: 'LIABILITY' as const, isSystem: true },
+  { id: 'acc-2100', code: '2100', name: 'Tax Payable',               type: 'LIABILITY' as const, isSystem: true },
   { id: 'acc-3000', code: '3000', name: 'Retained Earnings',         type: 'EQUITY' as const,    isSystem: true },
   { id: 'acc-4000', code: '4000', name: 'Sales Revenue',             type: 'REVENUE' as const,   isSystem: true },
   { id: 'acc-5000', code: '5000', name: 'Cost of Goods Sold',        type: 'EXPENSE' as const,   isSystem: true },

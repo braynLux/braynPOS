@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from 'fastify'
-import { getCreditStatus, recordRepayment, adjustCreditLimit } from './credit.service.js'
+import { getCreditStatus, recordRepayment, adjustCreditLimit, getArAgingReport, getApBalanceSummary } from './credit.service.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize }    from '../../middleware/authorize.js'
 import { RATE }         from '../../lib/rate-limit.plugin.js'
@@ -90,6 +90,30 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
     }).filter(s => s.outstanding > 0)
 
     return { outstandingSales }
+  })
+
+  // GET /credit/aging — accounts-receivable aging across all customers
+  app.get('/aging', {
+    config:     RATE.READ,
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+  }, async (request) => {
+    const isHQ = HQ_CREDIT_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+    return getArAgingReport(isHQ ? undefined : request.user.channelId!)
+  })
+
+  // GET /credit/supplier-balances — approximate AP summary (see service docstring)
+  app.get('/supplier-balances', {
+    config:     RATE.READ,
+    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+  }, async (request) => {
+    const isHQ = HQ_CREDIT_ROLES.includes(request.user.role)
+    if (!isHQ && !request.user.channelId) {
+      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    }
+    return getApBalanceSummary(isHQ ? undefined : request.user.channelId!)
   })
 
   // POST /credit/repay

@@ -154,6 +154,9 @@ export async function buildApp() {
     const { assetsRoutes } = await import('./modules/accounting/assets.routes.js')
     await v1.register(assetsRoutes, { prefix: '/accounting/assets' })
 
+    const { bankDepositsRoutes } = await import('./modules/accounting/bank-deposits.routes.js')
+    await v1.register(bankDepositsRoutes, { prefix: '/accounting/bank-deposits' })
+
     const { sessionsRoutes } = await import('./modules/sessions/sessions.routes.js')
     await v1.register(sessionsRoutes, { prefix: '/sessions' })
 
@@ -165,6 +168,9 @@ export async function buildApp() {
 
     const { salesRoutes } = await import('./modules/sales/sales.routes.js')
     await v1.register(salesRoutes, { prefix: '/sales' })
+
+    const { returnsRoutes } = await import('./modules/sales/returns.routes.js')
+    await v1.register(returnsRoutes, { prefix: '/sales/returns' })
 
     const { lpoRoutes } = await import('./modules/purchases/lpo.routes.js')
     await v1.register(lpoRoutes, { prefix: '/purchases/lpo' })
