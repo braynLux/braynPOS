@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js'
 import { calculateCommission } from '../commission/commission.service.js'
+import { buildMarginCorrectionJournalEntry } from '../../lib/ledger.js'
 import { logAction, AUDIT } from '../../lib/audit.js'
 
 export class MarginCorrectionService {
@@ -81,6 +82,15 @@ export class MarginCorrectionService {
             data: { costPriceSnapshot: newCost }
           })
           repairedSaleCount++
+
+          // FIX: the original sale's journal entry posted COGS/Inventory
+          // Valuation using the old (zero) cost and is never revisited —
+          // without this, the ledger stays permanently wrong even after
+          // the snapshot is "repaired". Post the missed COGS now.
+          const correction = newCost * si.quantity
+          if (correction > 0) {
+            await buildMarginCorrectionJournalEntry(tx as any, si.saleId, correction, channelId, actorId)
+          }
 
           // Attempt to unlock commission (re-calculate)
           const commission = await calculateCommission(si.saleId, tx as any)

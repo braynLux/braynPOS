@@ -324,29 +324,48 @@ async function commitSaleOnce(
       })
     }
 
-    // ── LOYALTY INTEGRITY (Sync Protection) ──
+    // ── LOYALTY INTEGRITY ──
+    // FIX: this whole block was gated behind `options?.skipStockCheck`, which
+    // is only ever true for offline-sync commits (syncOfflineSale / a
+    // conflict's FORCE_SYNC). A customer paying with LOYALTY_POINTS on a
+    // normal live sale never had their balance decremented at all — the
+    // payment-total check just sums payment amounts regardless of method, so
+    // the sale went through as if paid, for free, every time. Voiding such a
+    // sale then INCREMENTED points back (reverseSale, unconditional) on top
+    // of points that were never actually spent.
     const loyaltyPayment = input.payments.find(p => p.method === 'LOYALTY_POINTS')
-    if (loyaltyPayment && input.customerId && options?.skipStockCheck) {
+    if (loyaltyPayment && input.customerId) {
       const customer = await tx.customer.findUnique({ where: { id: input.customerId } })
       const currentPoints = Number(customer?.loyaltyPoints ?? 0)
       if (currentPoints < loyaltyPayment.amount) {
-        // Customer "overspent" points while offline. Convert deficit to Debt.
-        const deficit = loyaltyPayment.amount - currentPoints
-        await tx.customer.update({
-          where: { id: input.customerId },
-          data: {
-            loyaltyPoints: 0,
-            outstandingCredit: { increment: new Prisma.Decimal(deficit.toFixed(4)) }
+        if (options?.skipStockCheck) {
+          // Offline device already accepted the payment without live
+          // validation — can't reject retroactively. Convert the deficit
+          // to a debt instead of silently losing the difference.
+          const deficit = loyaltyPayment.amount - currentPoints
+          await tx.customer.update({
+            where: { id: input.customerId },
+            data: {
+              loyaltyPoints: 0,
+              outstandingCredit: { increment: new Prisma.Decimal(deficit.toFixed(4)) }
+            }
+          })
+          logAction({
+            action:    AUDIT.OFFLINE_OVERRIDE,
+            actorId:   actor.sub,
+            channelId: input.channelId,
+            targetType: 'Customer',
+            targetId:  input.customerId,
+            notes:     `Loyalty deficit of ${deficit} converted to Debt during offline sync.`
+          } as any)
+        } else {
+          // Live sale — reject before committing rather than giving away
+          // points the customer doesn't have.
+          throw {
+            statusCode: 422,
+            message: `Insufficient loyalty points. Available: ${currentPoints}, requested: ${loyaltyPayment.amount}`,
           }
-        })
-        logAction({
-          action:    AUDIT.OFFLINE_OVERRIDE,
-          actorId:   actor.sub,
-          channelId: input.channelId,
-          targetType: 'Customer',
-          targetId:  input.customerId,
-          notes:     `Loyalty deficit of ${deficit} converted to Debt during offline sync.`
-        } as any)
+        }
       } else {
         await tx.customer.update({
           where: { id: input.customerId },

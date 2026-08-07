@@ -236,6 +236,44 @@ export async function buildStockAdjustmentShrinkageJournalEntry(
   return je
 }
 
+// ── MARGIN CORRECTION ────────────────────────────────────────────────────
+// DR: COGS / CR: Inventory Valuation
+//
+// FIX: repairMargin() (margin-correction.service.ts) retroactively fixes a
+// SaleItem's costPriceSnapshot from 0 to its real cost — reports that
+// compute COGS live from costPriceSnapshot (reports.service.ts) pick this
+// up correctly, but the sale's original journal entry already posted COGS
+// at the old (zero) cost and is never touched. Without this, the formal
+// ledger (Trial Balance / P&L / Balance Sheet) permanently understates
+// COGS and overstates Inventory Valuation for every repaired historical
+// sale, even after the "fix".
+export async function buildMarginCorrectionJournalEntry(
+  tx:         TransactionClient,
+  saleId:     string,
+  correction: number,
+  channelId:  string,
+  postedBy:   string
+) {
+  const je = await tx.journalEntry.create({
+    data: {
+      description:   `Margin correction for sale ${saleId}`,
+      referenceId:   saleId,
+      referenceType: 'ADJUSTMENT',
+      channelId,
+      postedBy,
+    },
+  })
+
+  await tx.ledgerLine.createMany({
+    data: [
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.COGS,            debitAmount: correction, creditAmount: 0 },
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.INVENTORY_VALUE, debitAmount: 0,          creditAmount: correction },
+    ],
+  })
+
+  return je
+}
+
 // ── PURCHASE ──────────────────────────────────────────────────────────
 // DR: Inventory Valuation / CR: Accounts Payable (credit) or Cash (cash)
 export async function buildPurchaseJournalEntry(

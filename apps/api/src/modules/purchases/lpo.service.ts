@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js'
 import type { Prisma } from '@prisma/client'
- 
+import { randomBytes } from 'crypto'
+
 export class LpoService {
   async create(data: {
     supplierId: string
@@ -10,7 +11,13 @@ export class LpoService {
     createdBy: string
     expectedDate?: string
   }) {
-    const orderNo = `LPO-${Date.now()}`
+    // FIX: orderNo is @unique but was Date.now() alone (millisecond
+    // granularity) — two LPOs created in the same millisecond (a double
+    // submit, or two staff in the same channel) collide and the second
+    // insert throws a raw P2002 instead of succeeding. purchaseNo,
+    // transferNo, and receiptNo already carry a random suffix for exactly
+    // this reason; LPOs never got the same fix.
+    const orderNo = `LPO-${Date.now()}-${randomBytes(3).toString('hex').toUpperCase()}`
 
     const supplier = await prisma.supplier.findUnique({
       where:  { id: data.supplierId },

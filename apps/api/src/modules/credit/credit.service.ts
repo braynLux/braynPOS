@@ -31,7 +31,7 @@ export async function getArAgingReport(channelId?: string) {
       saleType:   'CREDIT',
       deletedAt:  null,
     },
-    include: { payments: true },
+    orderBy: { createdAt: 'asc' },
   })
 
   const now = Date.now()
@@ -40,9 +40,29 @@ export async function getArAgingReport(channelId?: string) {
       customerId: c.id, customerName: c.name, phone: c.phone,
       current: 0, days30: 0, days60: 0, days90Plus: 0, total: 0,
     }
-    for (const s of sales.filter(s => s.customerId === c.id)) {
-      const paid = s.payments.filter(p => p.method !== 'CREDIT').reduce((sum, p) => sum + Number(p.amount), 0)
-      const outstanding = Number(s.netAmount) - paid
+
+    const customerSales = sales.filter(s => s.customerId === c.id)
+
+    // FIX: repayments (recordRepayment, below) are a lump-sum reduction of
+    // Customer.outstandingCredit — they are never allocated to a specific
+    // sale, since no sale-level payment mechanism for credit exists (the
+    // only Payment row a credit sale ever has is its original placeholder
+    // with method 'CREDIT', created once at commit and never touched
+    // again). Summing "non-CREDIT payments" per sale was therefore always
+    // zero, so `outstanding` always equaled the full original netAmount —
+    // every repayment ever made was silently ignored, permanently
+    // overstating this report. outstandingCredit is the one number that
+    // actually reflects repayments; allocate it across this customer's
+    // credit sales oldest-first (standard FIFO aging convention) so the
+    // bucketed total always reconciles exactly to what's really still owed.
+    const totalOriginal = customerSales.reduce((sum, s) => sum + Number(s.netAmount), 0)
+    let repaidPool = Math.max(0, totalOriginal - Number(c.outstandingCredit))
+
+    for (const s of customerSales) {
+      const saleAmount = Number(s.netAmount)
+      const payoff = Math.min(saleAmount, repaidPool)
+      repaidPool -= payoff
+      const outstanding = saleAmount - payoff
       if (outstanding <= 0) continue
 
       const reference = s.dueDate ?? s.createdAt
