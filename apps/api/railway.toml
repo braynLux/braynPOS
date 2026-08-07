@@ -4,7 +4,7 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "pnpm --filter api start:prod"
-preDeployCommand = "sh -c 'pnpm --filter api exec prisma migrate deploy && pnpm --filter api run db:seed'"
+preDeployCommand = "sh -c 'pnpm --filter api exec prisma migrate deploy'"
 healthcheckPath = "/health"
 healthcheckTimeout = 120
 restartPolicyType = "on_failure"
