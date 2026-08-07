@@ -69,7 +69,7 @@ export function ManagerPinModal({ action, contextId, marginPercent, onApproved, 
           <div style={{ fontSize: '2rem', marginBottom: 8 }}>🛡️</div>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Manager Approval</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: 6 }}>
-            Override for <strong style={{ color: 'var(--text-primary)' }}>{actionLabel}</strong> requires a manager's password
+            Override for <strong style={{ color: 'var(--text-primary)' }}>{actionLabel}</strong> requires a manager&apos;s password
           </p>
         </div>
 
