@@ -135,16 +135,23 @@ export async function buildExpenseJournalEntry(
 }
 
 // ── EXPENSE REVERSAL ──────────────────────────────────────────────────
-// DR: Cash on Hand / CR: General Expense
+// DR: Cash, Bank, Accounts Payable, or Retained Earnings (by paymentSource) / CR: General Expense
 // FIX: referenceType was 'EXPENSE' — identical to the original expense.
 // Reversals are now tagged 'EXPENSE_REVERSAL' so they are distinguishable
 // in the journal, P&L reports, and audit queries.
+//
+// FIX 2: this always debited Cash on Hand regardless of how the expense was
+// actually paid — the exact bug already fixed on buildExpenseJournalEntry's
+// forward path (see EXPENSE_CREDIT_ACCOUNT above), just missed here. Deleting
+// a BANK/CREDITOR/CAPITAL-funded expense left that account permanently
+// understated while incorrectly inflating Cash on Hand.
 export async function buildExpenseReversalJournalEntry(
   tx:      TransactionClient,
-  expense: { id: string; description: string; amount: number | { toNumber(): number }; channelId: string },
+  expense: { id: string; description: string; amount: number | { toNumber(): number }; channelId: string; paymentSource?: string },
   postedBy: string
 ) {
   const amount = toNum(expense.amount)
+  const debitAccountId = EXPENSE_CREDIT_ACCOUNT[expense.paymentSource ?? 'CASH'] ?? ACCOUNT_IDS.CASH_ON_HAND
 
   const je = await tx.journalEntry.create({
     data: {
@@ -158,7 +165,7 @@ export async function buildExpenseReversalJournalEntry(
 
   await tx.ledgerLine.createMany({
     data: [
-      { journalEntryId: je.id, accountId: ACCOUNT_IDS.CASH_ON_HAND,    debitAmount: amount, creditAmount: 0 },
+      { journalEntryId: je.id, accountId: debitAccountId,               debitAmount: amount, creditAmount: 0 },
       { journalEntryId: je.id, accountId: ACCOUNT_IDS.GENERAL_EXPENSE, debitAmount: 0,      creditAmount: amount },
     ],
   })
@@ -189,6 +196,78 @@ export async function buildShrinkageJournalEntry(
     data: [
       { journalEntryId: je.id, accountId: ACCOUNT_IDS.SHRINKAGE_LOSS,  debitAmount: shrinkageValue, creditAmount: 0 },
       { journalEntryId: je.id, accountId: ACCOUNT_IDS.INVENTORY_VALUE, debitAmount: 0,              creditAmount: shrinkageValue },
+    ],
+  })
+
+  return je
+}
+
+// ── STOCK ADJUSTMENT SHRINKAGE ─────────────────────────────────────────
+// DR: Shrinkage & Transit Loss / CR: Inventory Valuation
+// Same account treatment as transfer shrinkage above, but for manual stock
+// adjustments (damage/expiry/theft) — kept separate so referenceType and the
+// journal description stay accurate rather than reusing 'Transit loss' /
+// TRANSFER_DISPUTE for something that isn't a transfer.
+export async function buildStockAdjustmentShrinkageJournalEntry(
+  tx:             TransactionClient,
+  referenceId:    string,
+  description:    string,
+  shrinkageValue: number,
+  channelId:      string,
+  postedBy:       string
+) {
+  const je = await tx.journalEntry.create({
+    data: {
+      description,
+      referenceId,
+      referenceType: 'ADJUSTMENT',
+      channelId,
+      postedBy,
+    },
+  })
+
+  await tx.ledgerLine.createMany({
+    data: [
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.SHRINKAGE_LOSS,  debitAmount: shrinkageValue, creditAmount: 0 },
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.INVENTORY_VALUE, debitAmount: 0,              creditAmount: shrinkageValue },
+    ],
+  })
+
+  return je
+}
+
+// ── MARGIN CORRECTION ────────────────────────────────────────────────────
+// DR: COGS / CR: Inventory Valuation
+//
+// FIX: repairMargin() (margin-correction.service.ts) retroactively fixes a
+// SaleItem's costPriceSnapshot from 0 to its real cost — reports that
+// compute COGS live from costPriceSnapshot (reports.service.ts) pick this
+// up correctly, but the sale's original journal entry already posted COGS
+// at the old (zero) cost and is never touched. Without this, the formal
+// ledger (Trial Balance / P&L / Balance Sheet) permanently understates
+// COGS and overstates Inventory Valuation for every repaired historical
+// sale, even after the "fix".
+export async function buildMarginCorrectionJournalEntry(
+  tx:         TransactionClient,
+  saleId:     string,
+  correction: number,
+  channelId:  string,
+  postedBy:   string
+) {
+  const je = await tx.journalEntry.create({
+    data: {
+      description:   `Margin correction for sale ${saleId}`,
+      referenceId:   saleId,
+      referenceType: 'ADJUSTMENT',
+      channelId,
+      postedBy,
+    },
+  })
+
+  await tx.ledgerLine.createMany({
+    data: [
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.COGS,            debitAmount: correction, creditAmount: 0 },
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.INVENTORY_VALUE, debitAmount: 0,          creditAmount: correction },
     ],
   })
 
@@ -290,18 +369,28 @@ export async function buildPayrollJournalEntry(
   return je
 }
 
-// ── CREDIT NOTE (SALE REVERSAL) ───────────────────────────────────────
-// Cash reversal:   DR Sales Revenue / CR Cash on Hand   + DR Inventory / CR COGS
-// Credit reversal: DR Sales Revenue / CR Accounts Rec.  + DR Inventory / CR COGS
+// ── CREDIT NOTE (SALE REVERSAL — full void or partial return) ─────────
+// Cash reversal:   DR Sales Revenue + DR Tax Payable / CR Cash on Hand   + DR Inventory / CR COGS
+// Credit reversal: DR Sales Revenue + DR Tax Payable / CR Accounts Rec. + DR Inventory / CR COGS
+//
+// FIX: netAmount is what was actually posted to Cash/AR on the original sale
+// (buildSaleJournalEntry debits netAmount, not the pre-discount totalAmount).
+// The reversal must credit the same netAmount back, split between Sales
+// Revenue and Tax Payable exactly as the original entry split it — otherwise
+// a voided/returned sale with a discount or tax leaves the ledger unbalanced
+// and permanently overstates Tax Payable.
 export async function buildCreditNoteJournalEntry(
   tx:           TransactionClient,
   referenceId:  string,
-  refundAmount: number,
+  netAmount:    number,
+  taxAmount:    number,
   costAmount:   number,
   channelId:    string,
   postedBy:     string,
   wasCredit = false
 ) {
+  const revenueAmount = netAmount - taxAmount
+
   const je = await tx.journalEntry.create({
     data: {
       description:   `Credit note for ${referenceId}`,
@@ -317,9 +406,15 @@ export async function buildCreditNoteJournalEntry(
     : ACCOUNT_IDS.CASH_ON_HAND
 
   const lines: any[] = [
-    { journalEntryId: je.id, accountId: ACCOUNT_IDS.SALES_REVENUE, debitAmount: refundAmount, creditAmount: 0 },
-    { journalEntryId: je.id, accountId: creditAccountId,            debitAmount: 0,            creditAmount: refundAmount },
+    { journalEntryId: je.id, accountId: ACCOUNT_IDS.SALES_REVENUE, debitAmount: revenueAmount, creditAmount: 0 },
+    { journalEntryId: je.id, accountId: creditAccountId,            debitAmount: 0,             creditAmount: netAmount },
   ]
+
+  if (taxAmount > 0) {
+    lines.push(
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.TAX_PAYABLE, debitAmount: taxAmount, creditAmount: 0 }
+    )
+  }
 
   if (costAmount > 0) {
     lines.push(
@@ -357,6 +452,153 @@ export async function buildBankDepositJournalEntry(
     data: [
       { journalEntryId: je.id, accountId: bankAccountId,               debitAmount: amount, creditAmount: 0 },
       { journalEntryId: je.id, accountId: ACCOUNT_IDS.CASH_ON_HAND,    debitAmount: 0,      creditAmount: amount },
+    ],
+  })
+
+  return je
+}
+
+// ── INVOICE (B2B ACCOUNTS RECEIVABLE) ──────────────────────────────────
+// DR: Accounts Receivable / CR: Sales Revenue + Tax Payable (if any)
+// Only INVOICE-type documents post — QUOTATION and PROFORMA are non-binding
+// and must not touch the books until converted into an actual invoice.
+export async function buildInvoiceJournalEntry(
+  tx:        TransactionClient,
+  invoice:   { id: string; invoiceNo: string; channelId: string; totalAmount: number | { toNumber(): number }; taxAmount: number | { toNumber(): number } },
+  postedBy:  string
+) {
+  const totalAmount   = toNum(invoice.totalAmount)
+  const taxAmount     = toNum(invoice.taxAmount)
+  const revenueAmount = totalAmount - taxAmount
+
+  const je = await tx.journalEntry.create({
+    data: {
+      description:   `Invoice ${invoice.invoiceNo}`,
+      referenceId:   invoice.id,
+      referenceType: 'INVOICE',
+      channelId:     invoice.channelId,
+      postedBy,
+    },
+  })
+
+  const lines: any[] = [
+    { journalEntryId: je.id, accountId: ACCOUNT_IDS.ACCOUNTS_RECEIVABLE, debitAmount: totalAmount, creditAmount: 0 },
+    { journalEntryId: je.id, accountId: ACCOUNT_IDS.SALES_REVENUE,      debitAmount: 0,           creditAmount: revenueAmount },
+  ]
+  if (taxAmount > 0) {
+    lines.push({ journalEntryId: je.id, accountId: ACCOUNT_IDS.TAX_PAYABLE, debitAmount: 0, creditAmount: taxAmount })
+  }
+
+  await tx.ledgerLine.createMany({ data: lines })
+  return je
+}
+
+// ── INVOICE VOID (reversal of the entry above) ─────────────────────────
+// DR: Sales Revenue + Tax Payable / CR: Accounts Receivable
+// Only called for invoices that actually posted (type INVOICE, amountPaid = 0
+// — voiding a paid invoice is blocked upstream in invoice.service.ts).
+export async function buildInvoiceVoidJournalEntry(
+  tx:        TransactionClient,
+  invoice:   { id: string; invoiceNo: string; channelId: string; totalAmount: number | { toNumber(): number }; taxAmount: number | { toNumber(): number } },
+  postedBy:  string
+) {
+  const totalAmount   = toNum(invoice.totalAmount)
+  const taxAmount     = toNum(invoice.taxAmount)
+  const revenueAmount = totalAmount - taxAmount
+
+  const je = await tx.journalEntry.create({
+    data: {
+      description:   `Void invoice ${invoice.invoiceNo}`,
+      referenceId:   invoice.id,
+      referenceType: 'INVOICE',
+      channelId:     invoice.channelId,
+      postedBy,
+    },
+  })
+
+  const lines: any[] = [
+    { journalEntryId: je.id, accountId: ACCOUNT_IDS.SALES_REVENUE,      debitAmount: revenueAmount, creditAmount: 0 },
+    { journalEntryId: je.id, accountId: ACCOUNT_IDS.ACCOUNTS_RECEIVABLE, debitAmount: 0,             creditAmount: totalAmount },
+  ]
+  if (taxAmount > 0) {
+    lines.push({ journalEntryId: je.id, accountId: ACCOUNT_IDS.TAX_PAYABLE, debitAmount: taxAmount, creditAmount: 0 })
+  }
+
+  await tx.ledgerLine.createMany({ data: lines })
+  return je
+}
+
+// ── INVOICE PAYMENT ─────────────────────────────────────────────────────
+// DR: Cash on Hand or Bank Account (by payment method) / CR: Accounts Receivable
+const INVOICE_PAYMENT_DEBIT_ACCOUNT: Record<string, string> = {
+  CASH:          ACCOUNT_IDS.CASH_ON_HAND,
+  MOBILE_MONEY:  ACCOUNT_IDS.BANK_ACCOUNT,
+  CARD:          ACCOUNT_IDS.BANK_ACCOUNT,
+  BANK_TRANSFER: ACCOUNT_IDS.BANK_ACCOUNT,
+}
+
+export async function buildInvoicePaymentJournalEntry(
+  tx:            TransactionClient,
+  invoice:       { id: string; invoiceNo: string; channelId: string },
+  amount:        number,
+  paymentMethod: string,
+  postedBy:      string
+) {
+  const debitAccountId = INVOICE_PAYMENT_DEBIT_ACCOUNT[paymentMethod] ?? ACCOUNT_IDS.CASH_ON_HAND
+
+  const je = await tx.journalEntry.create({
+    data: {
+      description:   `Payment for invoice ${invoice.invoiceNo}`,
+      referenceId:   invoice.id,
+      referenceType: 'INVOICE_PAYMENT',
+      channelId:     invoice.channelId,
+      postedBy,
+    },
+  })
+
+  await tx.ledgerLine.createMany({
+    data: [
+      { journalEntryId: je.id, accountId: debitAccountId,                     debitAmount: amount, creditAmount: 0 },
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.ACCOUNTS_RECEIVABLE,    debitAmount: 0,      creditAmount: amount },
+    ],
+  })
+
+  return je
+}
+
+// ── CUSTOMER CREDIT REPAYMENT ────────────────────────────────────────────
+// DR: Cash on Hand or Bank Account (by method) / CR: Accounts Receivable
+//
+// FIX: recordRepayment() previously only decremented Customer.outstandingCredit
+// (a shadow field feeding the AR Aging report) and logged a CustomerPayment —
+// it never touched the general ledger. The original credit sale had already
+// debited Accounts Receivable via buildSaleJournalEntry; without this, AR on
+// the Balance Sheet only ever grows and never clears when customers pay off
+// what they owe, and the cash/bank actually collected is never recorded.
+export async function buildCustomerRepaymentJournalEntry(
+  tx:         TransactionClient,
+  customerId: string,
+  amount:     number,
+  method:     string,
+  channelId:  string,
+  postedBy:   string
+) {
+  const debitAccountId = INVOICE_PAYMENT_DEBIT_ACCOUNT[method] ?? ACCOUNT_IDS.CASH_ON_HAND
+
+  const je = await tx.journalEntry.create({
+    data: {
+      description:   `Credit repayment from customer ${customerId}`,
+      referenceId:   customerId,
+      referenceType: 'CUSTOMER_REPAYMENT',
+      channelId,
+      postedBy,
+    },
+  })
+
+  await tx.ledgerLine.createMany({
+    data: [
+      { journalEntryId: je.id, accountId: debitAccountId,                  debitAmount: amount, creditAmount: 0 },
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.ACCOUNTS_RECEIVABLE, debitAmount: 0,      creditAmount: amount },
     ],
   })
 

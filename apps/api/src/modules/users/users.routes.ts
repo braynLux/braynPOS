@@ -11,7 +11,7 @@ import { validateApprovalToken } from '../auth/manager-approve.routes.js'
 
 const updateUserSchema = z.object({
   username: z.string().min(3).optional(),
-  email: z.string().email().optional(),
+  email: z.string().email().optional().or(z.literal('')),
   role: z.enum(['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'CASHIER', 'STOREKEEPER', 'PROMOTER', 'SALES_PERSON']).optional(),
   channelId: z.string().uuid().nullable().optional(),
   status: z.enum(['ACTIVE', 'INACTIVE', 'PENDING']).optional(),
@@ -37,7 +37,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/me', async (request) => {
     const body = z.object({
       username: z.string().min(3).optional(),
-      email: z.string().email().optional(),
+      email: z.string().email().optional().or(z.literal('')),
     }).parse(request.body)
     return usersService.update(request.user.sub, body, request.user)
   })

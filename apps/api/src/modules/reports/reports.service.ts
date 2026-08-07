@@ -258,6 +258,7 @@ export class ReportsService {
     })
 
     const channels = await prisma.channel.findMany({
+      where:  { deletedAt: null },
       select: { id: true, name: true, code: true },
     })
 
@@ -416,8 +417,8 @@ export class ReportsService {
       },
       include: {
         customer: true,
-        payments: true
-      }
+      },
+      orderBy: { createdAt: 'asc' },
     })
 
     const bucketing = {
@@ -426,25 +427,52 @@ export class ReportsService {
       p3: { label: '61+ Days', amount: 0, customers: new Set<string>() },
     }
 
-    sales.forEach(sale => {
-      const paid = sale.payments.reduce((acc, p) => acc + Number(p.amount), 0)
-      const balance = Number(sale.netAmount) - paid
-      
-      if (balance <= 0) return
+    // FIX: repayments are a lump-sum reduction of Customer.outstandingCredit
+    // (credit.service.ts recordRepayment) — never allocated to a specific
+    // sale, since a credit sale's own Payment row (method: 'CREDIT') is
+    // created once at commit and never touched again. Summing that row
+    // always produced balance === netAmount, so every repayment ever made
+    // was silently ignored here, permanently overstating this report.
+    // outstandingCredit is the one number that reflects repayments; we
+    // allocate it across each customer's credit sales oldest-first
+    // (standard FIFO aging convention) so the bucketed total always
+    // reconciles exactly to what's really still owed.
+    const salesByCustomer = new Map<string, typeof sales>()
+    for (const sale of sales) {
+      if (!sale.customerId) continue
+      const list = salesByCustomer.get(sale.customerId) ?? []
+      list.push(sale)
+      salesByCustomer.set(sale.customerId, list)
+    }
 
-      const diffDays = Math.ceil((today.getTime() - sale.createdAt.getTime()) / (1000 * 60 * 60 * 24))
-      
-      if (diffDays <= 30) {
-        bucketing.p1.amount += balance
-        if (sale.customer) bucketing.p1.customers.add(sale.customer.name)
-      } else if (diffDays <= 60) {
-        bucketing.p2.amount += balance
-        if (sale.customer) bucketing.p2.customers.add(sale.customer.name)
-      } else {
-        bucketing.p3.amount += balance
-        if (sale.customer) bucketing.p3.customers.add(sale.customer.name)
+    for (const customerSales of salesByCustomer.values()) {
+      const customer = customerSales[0]!.customer
+      if (!customer) continue
+
+      const totalOriginal = customerSales.reduce((sum, s) => sum + Number(s.netAmount), 0)
+      let repaidPool = Math.max(0, totalOriginal - Number(customer.outstandingCredit))
+
+      for (const sale of customerSales) {
+        const saleAmount = Number(sale.netAmount)
+        const payoff = Math.min(saleAmount, repaidPool)
+        repaidPool -= payoff
+        const balance = saleAmount - payoff
+        if (balance <= 0) continue
+
+        const diffDays = Math.ceil((today.getTime() - sale.createdAt.getTime()) / (1000 * 60 * 60 * 24))
+
+        if (diffDays <= 30) {
+          bucketing.p1.amount += balance
+          bucketing.p1.customers.add(customer.name)
+        } else if (diffDays <= 60) {
+          bucketing.p2.amount += balance
+          bucketing.p2.customers.add(customer.name)
+        } else {
+          bucketing.p3.amount += balance
+          bucketing.p3.customers.add(customer.name)
+        }
       }
-    })
+    }
 
     return {
       buckets: [

@@ -14,7 +14,7 @@ const createChannelSchema = z.object({
   isMainWarehouse: z.boolean().optional(),
   address:        z.string().optional(),
   phone:          z.string().min(10).max(13).regex(/^[+0-9]+$/, 'Invalid phone number format'),
-  email:          z.string().email().optional(),
+  email:          z.string().email().optional().or(z.literal('')),
   featureFlags:   z.record(z.any()).optional(),
 })
 

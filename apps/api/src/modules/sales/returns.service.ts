@@ -1,4 +1,5 @@
 import { prisma } from '../../lib/prisma.js'
+import { buildCreditNoteJournalEntry } from '../../lib/ledger.js'
 
 const RETURN_REFERENCE_TYPE = 'sale_return'
 const NON_ADMIN_RETURN_WINDOW_MS = 3 * 60 * 60 * 1000
@@ -86,6 +87,8 @@ export async function processReturn(
 
     const saleItemById = new Map(sale.items.map(si => [si.id, si]))
     const created = []
+    let refundAmount = 0
+    let costAmount   = 0
 
     for (const line of lines) {
       const saleItem = saleItemById.get(line.saleItemId)
@@ -119,7 +122,35 @@ export async function processReturn(
         data:  { availableQty: { increment: line.quantity } },
       })
 
+      // Refund is the net (post-discount) per-unit price actually charged,
+      // not the gross unit price — mirrors how the original sale was posted.
+      const netUnitPrice = (Number(saleItem.lineTotal) - Number(saleItem.discountAmount)) / saleItem.quantity
+      refundAmount += netUnitPrice * line.quantity
+      costAmount   += Number(saleItem.costPriceSnapshot) * line.quantity
+
       created.push(movement)
+    }
+
+    // FIX: physical stock was being restored on every return, but nothing
+    // reversed the accounting side — Inventory Valuation, Sales Revenue, and
+    // (for credit sales) the customer's outstanding balance never moved,
+    // silently corrupting the P&L and Balance Sheet on every partial return.
+    if (refundAmount > 0) {
+      const saleTaxAmount = Number(sale.taxAmount)
+      const saleNetAmount = Number(sale.netAmount)
+      const proportionalTax = saleNetAmount > 0 ? saleTaxAmount * (refundAmount / saleNetAmount) : 0
+
+      await buildCreditNoteJournalEntry(
+        tx as any, sale.id, refundAmount, proportionalTax, costAmount,
+        sale.channelId, actorId, sale.saleType === 'CREDIT'
+      )
+
+      if (sale.saleType === 'CREDIT' && sale.customerId) {
+        await tx.customer.update({
+          where: { id: sale.customerId },
+          data:  { outstandingCredit: { decrement: refundAmount } },
+        })
+      }
     }
 
     return created

@@ -1,4 +1,5 @@
 import { basePrisma, prisma } from '../../lib/prisma.js'
+import { buildStockAdjustmentShrinkageJournalEntry } from '../../lib/ledger.js'
 
 export class StockTakeService {
   async start(channelId: string, startedBy: string) {
@@ -92,8 +93,14 @@ export class StockTakeService {
         // No discrepancy — nothing to correct
         if (discrepancy === 0) continue
 
-        // ── FIX: look up current WAC so the trigger can maintain accurate
-        //    cost data. Falls back to 0 safely if no balance row exists.
+        // FIX: no DB trigger maintains inventory_balances from stock_movements
+        // anywhere in this codebase (confirmed — no CREATE TRIGGER in any
+        // migration; the same false assumption was already found and fixed
+        // for manual stock adjustments and purchases elsewhere). This code
+        // logged the discrepancy as a StockMovement but never actually wrote
+        // the corrected quantity anywhere — completing a stock take never
+        // changed availableQty at all, defeating the entire point of a
+        // physical count reconciliation.
         const balance = await tx.inventoryBalance.findUnique({
           where: {
             itemId_channelId: {
@@ -117,6 +124,34 @@ export class StockTakeService {
             notes: `Stock Take Correction (Expected: ${item.expectedQty}, Counted: ${item.recordedQty}, Delta: ${discrepancy > 0 ? '+' : ''}${discrepancy})`
           }
         })
+
+        await tx.inventoryBalance.upsert({
+          where: {
+            itemId_channelId: {
+              itemId: item.itemId,
+              channelId: stockTake.channelId
+            }
+          },
+          create: { itemId: item.itemId, channelId: stockTake.channelId, availableQty: item.recordedQty },
+          update: { availableQty: { increment: discrepancy } },
+        })
+
+        // A negative discrepancy (counted less than expected) is a genuine
+        // physical loss — post it the same way a manual DAMAGED/THEFT stock
+        // adjustment does. A positive discrepancy (counted more than
+        // expected) is left unposted, same as manual adjustments: it's at
+        // least as likely to be a past data-entry error being corrected as
+        // a genuine inventory gain, so it isn't assumed to be real income.
+        if (discrepancy < 0) {
+          const shrinkageValue = Math.abs(discrepancy) * Number(balance?.weightedAvgCost ?? 0)
+          if (shrinkageValue > 0) {
+            await buildStockAdjustmentShrinkageJournalEntry(
+              tx as any, stockTake.id,
+              `Stock take correction: ${item.itemId} (expected ${item.expectedQty}, counted ${item.recordedQty})`,
+              shrinkageValue, stockTake.channelId, completedBy
+            )
+          }
+        }
       }
 
       return { id, status: 'COMPLETED' }

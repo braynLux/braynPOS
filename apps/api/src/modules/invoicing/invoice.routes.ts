@@ -84,10 +84,10 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
   app.post('/:id/payments', {
     preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request) => {
-    const { id }     = z.object({ id: z.string().uuid() }).parse(request.params)
-    const { amount } = recordPaymentSchema.parse(request.body)
-    const isHQ       = HQ_INVOICE_ROLES.includes(request.user.role)
-    return invoiceService.recordPayment(id, amount, isHQ ? undefined : request.user.channelId!)
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
+    const { amount, paymentMethod } = recordPaymentSchema.parse(request.body)
+    const isHQ   = HQ_INVOICE_ROLES.includes(request.user.role)
+    return invoiceService.recordPayment(id, amount, paymentMethod, request.user.sub, isHQ ? undefined : request.user.channelId!)
   })
 
   // ── Void ─────────────────────────────────────────────────────────────
@@ -96,6 +96,6 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const isHQ   = HQ_INVOICE_ROLES.includes(request.user.role)
-    return invoiceService.void(id, isHQ ? undefined : request.user.channelId!)
+    return invoiceService.void(id, request.user.sub, isHQ ? undefined : request.user.channelId!)
   })
 }

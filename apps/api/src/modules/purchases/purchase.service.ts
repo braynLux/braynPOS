@@ -353,11 +353,15 @@ export class PurchaseService {
       }
 
       // 3. Reverse Ledger entries
+      // FIX: the original purchase posted Inventory Valuation and AP/Cash for
+      // totalCost + landedCostTotal (see create() above) — reversing only
+      // totalCost left both accounts permanently overstated by the landed
+      // cost whenever a voided purchase had any (freight, duty, etc).
       const { buildPurchaseReturnJournalEntry } = await import('../../lib/ledger.js')
       await buildPurchaseReturnJournalEntry(
         tx as any,
         purchase,
-        Number(purchase.totalCost),
+        Number(purchase.totalCost) + Number(purchase.landedCostTotal),
         deletedBy,
         purchase.paymentMethod === 'CASH'
       )

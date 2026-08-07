@@ -84,7 +84,10 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
     const body = z.object({
       name:        z.string().min(1),
       phone:       z.string().min(10).max(13).regex(/^[+0-9]+$/, 'Invalid phone number format'),
-      email:       z.string().email().optional(),
+      // FIX: an untouched optional email input submits '', which
+      // .email().optional() rejects (it only allows undefined) — crashing
+      // customer creation with a 500 whenever email is left blank.
+      email:       z.string().email().optional().or(z.literal('')),
       tier:          z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
       creditLimit:   z.coerce.number().min(0).optional(),
       channelId:     z.string().uuid().optional(),
@@ -122,7 +125,7 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
     const body = z.object({
       name:        z.string().optional(),
       phone:       z.string().min(10).max(13).regex(/^[+0-9]+$/).optional(),
-      email:       z.string().email().optional(),
+      email:       z.string().email().optional().or(z.literal('')),
       tier:          z.enum(['BRONZE', 'SILVER', 'GOLD']).optional(),
       creditLimit:   z.coerce.number().min(0).optional(),
       contactPerson: z.string().max(100).optional(),
