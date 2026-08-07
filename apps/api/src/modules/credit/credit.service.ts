@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { Prisma } from '@prisma/client'
 import { logAction, AUDIT } from '../../lib/audit.js'
+import { buildCustomerRepaymentJournalEntry } from '../../lib/ledger.js'
 import type { TokenPayload } from '../../lib/jwt.js'
 
 export interface RecordRepaymentInput {
@@ -160,6 +161,10 @@ export async function recordRepayment(
       },
       select: { outstandingCredit: true, successfulRepayments: true },
     })
+
+    await buildCustomerRepaymentJournalEntry(
+      tx as any, input.customerId, amountToApply, input.method, customer.channelId, actor.sub
+    )
 
     return {
       customerId:              input.customerId,

@@ -37,7 +37,8 @@ export const listInvoicesQuerySchema = z.object({
 })
 
 export const recordPaymentSchema = z.object({
-  amount: z.coerce.number().positive(),
+  amount:        z.coerce.number().positive(),
+  paymentMethod: z.enum(['CASH', 'MOBILE_MONEY', 'CARD', 'BANK_TRANSFER']).default('CASH'),
 })
 
 export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>

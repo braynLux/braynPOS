@@ -119,9 +119,29 @@ async function commitSaleOnce(
       lockedBalances.map(r => [r.itemId, r.availableQty])
     )
 
+    // FIX: sale-level VAT was never computed — Item.taxClass, the Tax Payable
+    // ledger account, and buildSaleJournalEntry's tax-splitting logic all
+    // already existed for exactly this, and the Settings UI already lets an
+    // admin configure it (key 'taxSettings': vatEnabled/vatRate/inclusivePricing)
+    // — but nothing here ever read it, so taxAmount was hardcoded to 0.
+    // Tax-inclusive pricing only (the default, and the Kenyan retail-display
+    // norm): the price charged never changes, so this is a pure ledger-side
+    // split with zero risk to payment validation or receipts. Tax-exclusive
+    // pricing would need the price charged to increase by the tax amount,
+    // which requires POS-terminal changes (fetching tax settings client-side,
+    // adding tax to the collected total) beyond this fix's scope — that
+    // configuration intentionally still computes 0 tax, same as before.
+    const taxSettingRows = await tx.setting.findMany({
+      where: { key: 'taxSettings', OR: [{ channelId: null }, { channelId: input.channelId }] },
+    })
+    const globalTaxSetting  = taxSettingRows.find(s => s.channelId === null)?.value as any
+    const channelTaxSetting = taxSettingRows.find(s => s.channelId === input.channelId)?.value as any
+    const taxSettings = { vatEnabled: false, vatRate: 16, inclusivePricing: true, ...(globalTaxSetting || {}), ...(channelTaxSetting || {}) }
+
     let totalCost     = 0
     let totalAmount   = 0
-    let totalDiscount = input.discountAmount ?? 0
+    let totalLineDiscount = 0
+    let vatableNet    = 0
     const itemDetails: Record<string, any> = {}
 
     for (const line of input.items) {
@@ -187,18 +207,36 @@ async function commitSaleOnce(
         }
       }
 
-      const lineTotal    = line.quantity * Number(line.unitPrice)
-      if ((line.discountAmount ?? 0) > lineTotal) {
+      const lineTotal     = line.quantity * Number(line.unitPrice)
+      const lineDiscount  = line.discountAmount ?? 0
+      if (lineDiscount > lineTotal) {
         throw { statusCode: 422, message: `Discount for ${item.name} cannot exceed the line total` }
       }
-      totalAmount   += lineTotal
-      totalDiscount += line.discountAmount ?? 0
-      totalCost     += effectiveCost * line.quantity
+      totalAmount       += lineTotal
+      totalLineDiscount += lineDiscount
+      totalCost         += effectiveCost * line.quantity
+      if (item.taxClass === 'STANDARD') {
+        vatableNet += (lineTotal - lineDiscount)
+      }
     }
 
-    const netAmount = totalAmount - totalDiscount
+    const saleDiscount  = input.discountAmount ?? 0
+    const totalDiscount = saleDiscount + totalLineDiscount
+    const netAmount      = totalAmount - totalDiscount
     if (netAmount < 0) {
       throw { statusCode: 422, message: 'Discount cannot exceed the sale total' }
+    }
+
+    // Prorate the overall (non-per-line) discount across the vatable base
+    // before splitting out tax, so a blanket discount doesn't overstate tax.
+    const netBeforeSaleDiscount = totalAmount - totalLineDiscount
+    const vatableShare = netBeforeSaleDiscount > 0 ? vatableNet / netBeforeSaleDiscount : 0
+    const vatableNetFinal = Math.max(0, vatableNet - saleDiscount * vatableShare)
+
+    let taxAmount = 0
+    if (taxSettings.vatEnabled && taxSettings.inclusivePricing !== false) {
+      const vatRate = Number(taxSettings.vatRate ?? 16)
+      taxAmount = vatableNetFinal - (vatableNetFinal / (1 + vatRate / 100))
     }
 
     const paymentTotal = input.payments.reduce((sum, pmt) => sum + Number(pmt.amount), 0)
@@ -218,7 +256,7 @@ async function commitSaleOnce(
         saleType:         input.saleType as any,
         totalAmount:      new Prisma.Decimal(totalAmount.toFixed(4)),
         discountAmount:   new Prisma.Decimal(totalDiscount.toFixed(4)),
-        taxAmount:        0,
+        taxAmount:        new Prisma.Decimal(taxAmount.toFixed(4)),
         netAmount:        new Prisma.Decimal(netAmount.toFixed(4)),
         performedBy:      actor.sub,
         offlineReceiptNo: options?.offlineReceiptNo ?? null,
@@ -513,7 +551,11 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
     }
 
     const totalCost = sale.items.reduce((sum, item) => sum + (Number(item.costPriceSnapshot) * item.quantity), 0)
-    await buildCreditNoteJournalEntry(tx as any, sale.id, Number(sale.totalAmount), totalCost, sale.channelId, actorId, sale.saleType === 'CREDIT')
+    // FIX: was reversing totalAmount (pre-discount gross) — must reverse
+    // netAmount, the actual figure the original sale posted to Cash/AR,
+    // split by taxAmount, or a discounted/taxed sale leaves an unbalanced
+    // ledger and a permanent phantom Tax Payable balance on void.
+    await buildCreditNoteJournalEntry(tx as any, sale.id, Number(sale.netAmount), Number(sale.taxAmount), totalCost, sale.channelId, actorId, sale.saleType === 'CREDIT')
 
     await tx.commissionEntry.updateMany({
       where: { saleId: sale.id, status: { in: ['PENDING', 'APPROVED'] } },
@@ -600,25 +642,52 @@ export async function syncOfflineSale(payload: any, actor: TokenPayload, idempot
 }
 
 export class SalesService {
+  // FIX: commitSale() opens and commits its OWN independent prisma.$transaction
+  // (see commitSaleOnce above) — wrapping it inside this method's own outer
+  // transaction did NOT make the two atomic together. If commitSale succeeded
+  // but the outer transaction later failed (e.g. the status-update write),
+  // the sale stayed durably committed while the conflict rolled back to
+  // PENDING — and with no status guard, retrying (or two admins clicking
+  // resolve at once) would call commitSale a second time on the same
+  // payload, creating a duplicate sale. Fixed by atomically claiming the
+  // conflict (PENDING -> PROCESSING) before touching commitSale, and by
+  // not relying on transactional rollback to undo an already-committed sale.
   async resolveConflict(
-    conflictId: string, 
+    conflictId: string,
     action: 'FORCE_SYNC' | 'VOID',
     actor: TokenPayload,
     notes?: string
   ) {
-    return prisma.$transaction(async (tx) => {
-      const conflictFiltered = await (tx as any).syncConflict.findUniqueOrThrow({ 
-        where: { id: conflictId } 
-      })
-      const isAdmin = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actor.role)
-      if (!isAdmin) {
-        if (!actor.channelId) {
-          throw { statusCode: 400, message: 'Your account has no channel assigned' }
-        }
-        if (conflictFiltered.channelId !== actor.channelId) {
-          throw { statusCode: 403, message: 'You can only resolve conflicts for your assigned channel' }
-        }
+    const conflictFiltered = await prisma.syncConflict.findUniqueOrThrow({
+      where: { id: conflictId }
+    })
+    const isAdmin = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actor.role)
+    if (!isAdmin) {
+      if (!actor.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
       }
+      if (conflictFiltered.channelId !== actor.channelId) {
+        throw { statusCode: 403, message: 'You can only resolve conflicts for your assigned channel' }
+      }
+    }
+
+    // Atomically claim the conflict — prevents double-processing (concurrent
+    // clicks or a retry after partial failure) from committing two sales.
+    const claimed = await prisma.syncConflict.updateMany({
+      where: { id: conflictId, status: 'PENDING' },
+      data:  { status: 'PROCESSING' },
+    })
+    if (claimed.count === 0) {
+      throw { statusCode: 400, message: 'Conflict has already been resolved or is being processed' }
+    }
+
+    // Tracks whether commitSale actually succeeded, so the catch block below
+    // knows whether it's safe to release the claim back to PENDING (no sale
+    // exists yet, retry is safe) or whether a sale now durably exists and
+    // re-claiming would risk creating a duplicate on the next attempt.
+    let committedSale: any = null
+
+    try {
       const conflictPayload = conflictFiltered.salePayload as any
       if (conflictPayload?.saleData) {
         conflictPayload.saleData = {
@@ -628,19 +697,19 @@ export class SalesService {
       }
 
       if (action === 'FORCE_SYNC') {
-        const sale = await commitSale(conflictPayload.saleData, actor, {
+        committedSale = await commitSale(conflictPayload.saleData, actor, {
           offlineReceiptNo: conflictPayload.offlineReceiptNo,
           deviceDate:       conflictPayload.deviceDate,
-          skipStockCheck:   true 
+          skipStockCheck:   true
         })
 
-        await (tx as any).syncConflict.update({
+        await prisma.syncConflict.update({
           where: { id: conflictId },
-          data: { 
-            status: 'RESOLVED', 
+          data: {
+            status: 'RESOLVED',
             resolutionNotes: notes || 'Manager Override',
             resolvedBy: actor.sub,
-            saleId: (sale as any).id
+            saleId: committedSale.id
           }
         })
 
@@ -650,27 +719,44 @@ export class SalesService {
           actorRole: actor.role,
           channelId: conflictFiltered.channelId,
           targetType: 'Sale',
-          targetId: (sale as any).id,
+          targetId: committedSale.id,
           newValues: { notes: notes || 'Force-synced from Conflict Resolver' }
         })
 
-        return { status: 'resolved', saleId: (sale as any).id }
+        return { status: 'resolved', saleId: committedSale.id }
       }
 
       if (action === 'VOID') {
-        await (tx as any).syncConflict.update({
+        await prisma.syncConflict.update({
           where: { id: conflictId },
-          data: { 
-            status: 'VOIDED', 
+          data: {
+            status: 'VOIDED',
             resolutionNotes: notes || 'Voided by Manager',
-            resolvedBy: actor.sub 
+            resolvedBy: actor.sub
           }
         })
         return { status: 'voided' }
       }
 
+      // Unknown action — release the claim so it can be retried
+      await prisma.syncConflict.update({ where: { id: conflictId }, data: { status: 'PENDING' } })
       return { status: 'failed', message: 'Unknown action' }
-    })
+    } catch (err) {
+      if (committedSale) {
+        // The sale is already durably committed — reverting to PENDING here
+        // would let a retry call commitSale again on the same payload and
+        // create a duplicate. Leave it claimed (PROCESSING) and surface a
+        // loud error demanding manual reconciliation instead.
+        console.error(
+          `[resolveConflict] Sale ${committedSale.id} (${committedSale.receiptNo}) committed but marking conflict ${conflictId} resolved failed. ` +
+          `Left as PROCESSING to block auto-retry — needs manual reconciliation.`, err
+        )
+        throw { statusCode: 500, message: `Sale ${committedSale.receiptNo} was created but finalizing the conflict record failed. Do not retry — contact support for manual reconciliation.` }
+      }
+      // No sale was created — safe to release the claim for retry.
+      await prisma.syncConflict.update({ where: { id: conflictId }, data: { status: 'PENDING' } }).catch(() => {})
+      throw err
+    }
   }
 
   async findConflicts(channelId: string) {

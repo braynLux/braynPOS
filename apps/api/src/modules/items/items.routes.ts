@@ -251,9 +251,23 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
       movementType = body.quantity > 0 ? 'ADJUSTMENT_IN' : 'ADJUSTMENT_OUT'
     }
 
+    // Reason codes that represent a genuine inventory write-off — the item is
+    // physically gone and its value is a real loss, not a data correction.
+    // SYSTEM_CORRECTION and INITIAL_WALKTHROUGH (opening/reconciliation
+    // entries, like bulkOpeningStock) deliberately do NOT post to the ledger.
+    const SHRINKAGE_REASON_CODES = ['DAMAGED_IN_STORE', 'EXPIRED', 'THEFT_INVESTIGATION']
+    const isShrinkage = !body.isOpening
+      && movementType === 'ADJUSTMENT_OUT'
+      && SHRINKAGE_REASON_CODES.includes(body.reasonCode ?? '')
+
     // FIX 3: Update inventory_balances in a transaction with the stockMovement.
     // Previously only a stockMovement record was written — availableQty
     // was never updated so stock levels never changed from adjustments.
+    //
+    // FIX 4: Loss-type adjustments (damage, expiry, theft) never posted to
+    // the ledger at all — Shrinkage Loss / Inventory Valuation, the same
+    // accounts transfer shortages already use, stayed unaffected regardless
+    // of how much inventory value was actually written off.
     await prisma.$transaction(async (tx) => {
       await tx.stockMovement.create({
         data: {
@@ -270,11 +284,23 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
       })
 
       // Upsert: create balance if missing, increment if it exists
-      await tx.inventoryBalance.upsert({
+      const balance = await (tx as any).inventoryBalance.upsert({
         where: { itemId_channelId: { itemId: body.itemId, channelId: body.channelId } },
         create: { itemId: body.itemId, channelId: body.channelId, availableQty: body.quantity },
         update: { availableQty: { increment: body.quantity } },
       })
+
+      if (isShrinkage) {
+        const unitCost = Number(balance.weightedAvgCost ?? item.weightedAvgCost ?? 0)
+        const shrinkageValue = Math.abs(body.quantity) * unitCost
+        if (shrinkageValue > 0) {
+          const { buildStockAdjustmentShrinkageJournalEntry } = await import('../../lib/ledger.js')
+          await buildStockAdjustmentShrinkageJournalEntry(
+            tx as any, body.itemId, `Stock adjustment: ${item.name} (${body.reasonCode})`,
+            shrinkageValue, body.channelId, request.user.sub
+          )
+        }
+      }
     })
 
     // Emit event for real-time UI updates
@@ -451,7 +477,7 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
       name:         z.string().min(1),
       contactName:  z.string().optional(),
       phone:        z.string().min(10).max(13).regex(/^[+0-9]+$/, 'Invalid phone number format'),
-      email:        z.string().email().optional(),
+      email:        z.string().email().optional().or(z.literal('')),
       address:      z.string().optional(),
       taxPin:       z.string().optional(),
       paymentTerms: z.string().optional(),

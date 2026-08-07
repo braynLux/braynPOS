@@ -15,7 +15,14 @@ const ApproveSchema = z.object({
     'purchase_delete', 'expense_delete', 'credit_sale', 'negative_margin',
     'channel_create', 'channel_update', 'channel_delete',
   ]),
-  pin:       z.string().min(4).max(8),
+  // FIX: there is no separate PIN field/hash on User — this is checked
+  // against the manager's actual account passwordHash below. A max(8) cap
+  // rejected the request before verifyPassword ever ran for any manager
+  // whose real password exceeds 8 characters — including the seeded default
+  // admin password "Admin@123" (9 chars), making the entire manager-approval
+  // gate (purchase/expense/customer delete, negative margin, price overrides,
+  // discount overrides, etc.) unusable for realistic passwords.
+  pin:       z.string().min(1).max(100),
   contextId: z.string(),
   channelId: z.string().uuid(),
   marginPercent: z.coerce.number().optional(),

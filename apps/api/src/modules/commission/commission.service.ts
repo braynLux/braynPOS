@@ -96,7 +96,15 @@ export async function calculateCommission(saleId: string, tx?: any): Promise<Com
   }
 
   const settings = await settingsService.getAll(sale.channelId)
-  const payrollSettings = settings.payrollSettings as any
+  // FIX: settingsService.getAll() only returns keys that have a Setting row —
+  // on a fresh deployment (nothing seeds 'payrollSettings') this key is
+  // simply absent, not {}. Every unguarded payrollSettings.<field> read below
+  // then throws, and since no CommissionRule is seeded by default either,
+  // this path is hit on literally every sale until an admin configures
+  // payroll settings — silently killing commission calculation each time
+  // (caught by the sale.committed listener's try/catch, so sales still
+  // succeed, but no commission is ever recorded).
+  const payrollSettings = (settings.payrollSettings as any) ?? {}
   if (payrollSettings?.commissionsEnabled === false) {
     commissionLogger.info({ saleId, channelId: sale.channelId }, 'commission calc skipped — disabled in settings')
     return null

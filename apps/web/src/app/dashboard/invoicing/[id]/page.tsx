@@ -39,6 +39,7 @@ export default function InvoiceDetailPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [paymentAmount, setPaymentAmount] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState('CASH')
 
   const load = useCallback(() => {
     if (!token || !id) return
@@ -80,7 +81,7 @@ export default function InvoiceDetailPage() {
   const recordPayment = () => {
     const amount = Number(paymentAmount)
     if (!amount || amount <= 0) { toast.error('Enter a valid amount'); return }
-    runAction(() => api.post(`/invoices/${id}/payments`, { amount }, token!), 'Payment recorded')
+    runAction(() => api.post(`/invoices/${id}/payments`, { amount, paymentMethod }, token!), 'Payment recorded')
       .then(() => setPaymentAmount(''))
   }
 
@@ -213,6 +214,12 @@ export default function InvoiceDetailPage() {
                   placeholder="Amount" value={paymentAmount}
                   onChange={e => setPaymentAmount(e.target.value)}
                 />
+                <select className="input" style={{ width: 150 }} value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
+                  <option value="CASH">Cash</option>
+                  <option value="MOBILE_MONEY">Mobile Money</option>
+                  <option value="CARD">Card</option>
+                  <option value="BANK_TRANSFER">Bank Transfer</option>
+                </select>
                 <button className="btn btn-primary" disabled={busy} onClick={recordPayment}>Record Payment</button>
               </div>
             )}

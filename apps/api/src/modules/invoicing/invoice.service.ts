@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { Prisma } from '@prisma/client'
 import type { CreateInvoiceInput, ListInvoicesQuery } from './invoice.schema.js'
+import { buildInvoiceJournalEntry, buildInvoiceVoidJournalEntry, buildInvoicePaymentJournalEntry } from '../../lib/ledger.js'
 
 const DOC_PREFIX: Record<string, string> = {
   QUOTATION: 'QUO',
@@ -40,38 +41,50 @@ export class InvoiceService {
     const subtotal = data.lines.reduce((s, l) => s + l.quantity * l.unitPrice, 0)
     const totalAmount = Math.max(0, subtotal - lineDiscountTotal - data.discountAmount + (data.taxExempt ? 0 : data.taxAmount))
 
-    return prisma.invoice.create({
-      data: {
-        invoiceNo:       generateDocNo(data.type),
-        type:            data.type,
-        status:          'DRAFT',
-        channelId:       data.channelId,
-        customerId:      data.customerId,
-        subtotal,
-        discountAmount:  data.discountAmount + lineDiscountTotal,
-        taxAmount:       data.taxExempt ? 0 : data.taxAmount,
-        totalAmount,
-        dueDate:         data.dueDate ? new Date(data.dueDate) : null,
-        notes:           data.notes,
-        customerOrderNo: data.customerOrderNo,
-        quotationRefNo:  data.quotationRefNo,
-        taxExempt:       data.taxExempt,
-        terms:           data.terms,
-        selectedBankId:  data.selectedBankId,
-        createdBy:       data.createdBy,
-        convertedFromId: data.convertedFromId,
-        lines: {
-          create: data.lines.map(l => ({
-            itemId:         l.itemId,
-            description:    l.description,
-            quantity:       l.quantity,
-            unitPrice:      l.unitPrice,
-            discountAmount: l.discountAmount ?? 0,
-            lineTotal:      l.quantity * l.unitPrice - (l.discountAmount ?? 0),
-          })),
+    // FIX: invoices previously never touched the ledger — a B2B invoice
+    // created Accounts Receivable in name only, invisible to the Trial
+    // Balance, P&L, Balance Sheet, and AR Aging Report. QUOTATION/PROFORMA
+    // are non-binding and must NOT post; only a real INVOICE creates AR.
+    return prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.create({
+        data: {
+          invoiceNo:       generateDocNo(data.type),
+          type:            data.type,
+          status:          'DRAFT',
+          channelId:       data.channelId,
+          customerId:      data.customerId,
+          subtotal,
+          discountAmount:  data.discountAmount + lineDiscountTotal,
+          taxAmount:       data.taxExempt ? 0 : data.taxAmount,
+          totalAmount,
+          dueDate:         data.dueDate ? new Date(data.dueDate) : null,
+          notes:           data.notes,
+          customerOrderNo: data.customerOrderNo,
+          quotationRefNo:  data.quotationRefNo,
+          taxExempt:       data.taxExempt,
+          terms:           data.terms,
+          selectedBankId:  data.selectedBankId,
+          createdBy:       data.createdBy,
+          convertedFromId: data.convertedFromId,
+          lines: {
+            create: data.lines.map(l => ({
+              itemId:         l.itemId,
+              description:    l.description,
+              quantity:       l.quantity,
+              unitPrice:      l.unitPrice,
+              discountAmount: l.discountAmount ?? 0,
+              lineTotal:      l.quantity * l.unitPrice - (l.discountAmount ?? 0),
+            })),
+          },
         },
-      },
-      include: { lines: true, customer: { select: { id: true, name: true } }, bank: true },
+        include: { lines: true, customer: { select: { id: true, name: true } }, bank: true },
+      })
+
+      if (invoice.type === 'INVOICE') {
+        await buildInvoiceJournalEntry(tx as any, invoice, data.createdBy)
+      }
+
+      return invoice
     })
   }
 
@@ -168,29 +181,38 @@ export class InvoiceService {
     })
   }
 
-  async recordPayment(id: string, amount: number, channelId?: string) {
-    const invoice = await prisma.invoice.findFirstOrThrow({
-      where: { id, ...(channelId && { channelId }) },
-    })
-    if (invoice.type !== 'INVOICE') {
-      throw { statusCode: 400, message: 'Only invoices accept payments — convert this document first' }
-    }
-    if (invoice.status === 'VOID') {
-      throw { statusCode: 400, message: 'Cannot record payment against a voided invoice' }
-    }
+  async recordPayment(id: string, amount: number, paymentMethod: string, postedBy: string, channelId?: string) {
+    return prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.findFirstOrThrow({
+        where: { id, ...(channelId && { channelId }) },
+      })
+      if (invoice.type !== 'INVOICE') {
+        throw { statusCode: 400, message: 'Only invoices accept payments — convert this document first' }
+      }
+      if (invoice.status === 'VOID') {
+        throw { statusCode: 400, message: 'Cannot record payment against a voided invoice' }
+      }
 
-    const newAmountPaid = Number(invoice.amountPaid) + amount
-    if (newAmountPaid > Number(invoice.totalAmount) + 0.01) {
-      throw { statusCode: 422, message: 'Payment exceeds the outstanding balance' }
-    }
+      const newAmountPaid = Number(invoice.amountPaid) + amount
+      if (newAmountPaid > Number(invoice.totalAmount) + 0.01) {
+        throw { statusCode: 422, message: 'Payment exceeds the outstanding balance' }
+      }
 
-    const status = newAmountPaid >= Number(invoice.totalAmount)
-      ? 'PAID'
-      : newAmountPaid > 0 ? 'PARTIALLY_PAID' : invoice.status
+      const status = newAmountPaid >= Number(invoice.totalAmount)
+        ? 'PAID'
+        : newAmountPaid > 0 ? 'PARTIALLY_PAID' : invoice.status
 
-    return prisma.invoice.update({
-      where: { id },
-      data:  { amountPaid: newAmountPaid, status },
+      const updated = await tx.invoice.update({
+        where: { id },
+        data:  { amountPaid: newAmountPaid, status },
+      })
+
+      // FIX: payments were only ever recorded on the Invoice row itself —
+      // Cash/Bank never moved and Accounts Receivable never cleared on the
+      // actual books, so a "PAID" invoice still showed as outstanding AR.
+      await buildInvoicePaymentJournalEntry(tx as any, invoice, amount, paymentMethod, postedBy)
+
+      return updated
     })
   }
 
@@ -204,17 +226,29 @@ export class InvoiceService {
     return prisma.invoice.update({ where: { id }, data: { status: 'SENT' } })
   }
 
-  async void(id: string, channelId?: string) {
-    const invoice = await prisma.invoice.findFirstOrThrow({
-      where: { id, ...(channelId && { channelId }) },
+  async void(id: string, postedBy: string, channelId?: string) {
+    return prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.findFirstOrThrow({
+        where: { id, ...(channelId && { channelId }) },
+      })
+      if (invoice.status === 'VOID') {
+        throw { statusCode: 400, message: 'Document is already void' }
+      }
+      if (Number(invoice.amountPaid) > 0) {
+        throw { statusCode: 400, message: 'Cannot void an invoice with recorded payments' }
+      }
+
+      const updated = await tx.invoice.update({ where: { id }, data: { status: 'VOID', voidedAt: new Date() } })
+
+      // Only INVOICE-type documents ever posted (see create()) — reverse
+      // that same entry, or a voided invoice keeps sitting on the Balance
+      // Sheet as live Accounts Receivable forever.
+      if (invoice.type === 'INVOICE') {
+        await buildInvoiceVoidJournalEntry(tx as any, invoice, postedBy)
+      }
+
+      return updated
     })
-    if (invoice.status === 'VOID') {
-      throw { statusCode: 400, message: 'Document is already void' }
-    }
-    if (Number(invoice.amountPaid) > 0) {
-      throw { statusCode: 400, message: 'Cannot void an invoice with recorded payments' }
-    }
-    return prisma.invoice.update({ where: { id }, data: { status: 'VOID', voidedAt: new Date() } })
   }
 }
 
