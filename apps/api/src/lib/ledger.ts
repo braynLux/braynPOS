@@ -385,14 +385,31 @@ export async function buildPurchaseReturnJournalEntry(
 }
 
 // ── PAYROLL ───────────────────────────────────────────────────────────
-// DR: Payroll Expense / CR: Cash on Hand
+// DR: Payroll Expense (gross + employer contributions)
+//   CR: Cash on Hand  (net actually paid out)
+//   CR: Tax Payable   (statutory amounts withheld + employer contributions,
+//                      still owed to the authorities until remitted)
+//
+// FIX: this used to post net pay alone — DR Payroll Expense / CR Cash for the
+// net figure — which understated payroll cost by everything withheld from
+// staff plus the employer's own contributions, and recorded no liability at
+// all for money deducted from employees and owed onward. SalaryRun already
+// carried the deduction and employer-cost totals; they were simply not posted.
 export async function buildPayrollJournalEntry(
   tx:           TransactionClient,
   salaryRunId:  string,
-  totalPayroll: number,
+  amounts:      { netPay: number; employeeDeductions: number; employerContributions: number },
   channelId:    string,
   postedBy:     string
 ) {
+  const netPay                = amounts.netPay
+  const employeeDeductions    = amounts.employeeDeductions
+  const employerContributions = amounts.employerContributions
+  // Gross is derived rather than passed so the entry cannot be handed a set of
+  // figures that do not balance: net + withheld is exactly what was earned.
+  const payrollExpense        = netPay + employeeDeductions + employerContributions
+  const statutoryLiability    = employeeDeductions + employerContributions
+
   const je = await tx.journalEntry.create({
     data: {
       description:   `Payroll run ${salaryRunId}`,
@@ -403,12 +420,17 @@ export async function buildPayrollJournalEntry(
     },
   })
 
-  await tx.ledgerLine.createMany({
-    data: [
-      { journalEntryId: je.id, accountId: ACCOUNT_IDS.PAYROLL_EXPENSE, debitAmount: totalPayroll, creditAmount: 0 },
-      { journalEntryId: je.id, accountId: ACCOUNT_IDS.CASH_ON_HAND,    debitAmount: 0,            creditAmount: totalPayroll },
-    ],
-  })
+  const lines: any[] = [
+    { journalEntryId: je.id, accountId: ACCOUNT_IDS.PAYROLL_EXPENSE, debitAmount: payrollExpense, creditAmount: 0 },
+    { journalEntryId: je.id, accountId: ACCOUNT_IDS.CASH_ON_HAND,    debitAmount: 0,              creditAmount: netPay },
+  ]
+  if (statutoryLiability !== 0) {
+    lines.push(
+      { journalEntryId: je.id, accountId: ACCOUNT_IDS.TAX_PAYABLE, debitAmount: 0, creditAmount: statutoryLiability }
+    )
+  }
+
+  await tx.ledgerLine.createMany({ data: lines })
 
   return je
 }
