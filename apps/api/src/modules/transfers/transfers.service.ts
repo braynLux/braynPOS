@@ -106,10 +106,27 @@ export class TransfersService {
           })
 
           // No DB trigger exists! We must manually deduct from source location.
-          await (tx as any).inventoryBalance.update({
-            where: { itemId_channelId: { itemId: line.itemId, channelId: data.fromChannelId } },
-            data:  { availableQty: { decrement: line.quantity } }
-          })
+          //
+          // FIX: the availability check above runs before the transaction opens,
+          // so two transfers of the same item raced — both read availableQty 10,
+          // both passed, and both decremented, driving stock negative and
+          // shipping units that were never there. A plain decrement cannot
+          // detect that. This conditional UPDATE re-checks the quantity inside
+          // the transaction, in the same statement that applies the decrement,
+          // so the loser matches no row and is rejected.
+          const decremented = await tx.$executeRaw`
+            UPDATE inventory_balances
+            SET "availableQty" = "availableQty" - ${line.quantity}
+            WHERE "itemId"     = ${line.itemId}::text
+              AND "channelId"  = ${data.fromChannelId}::text
+              AND "availableQty" >= ${line.quantity}
+          `
+          if (decremented === 0) {
+            throw {
+              statusCode: 422,
+              message: `Insufficient stock for item ${line.itemId} — another transfer or sale consumed it while this transfer was being prepared. Please retry.`,
+            }
+          }
           if (line.serialIds?.length) {
             for (const serialId of line.serialIds) {
               await tx.serial.update({
@@ -158,6 +175,20 @@ export class TransfersService {
 
     if (t.status !== 'SENT') {
       throw { statusCode: 400, message: `Only SENT transfers can be received. Current: ${t.status}` }
+    }
+
+    // FIX: the loop below walks the caller's payload, so any transfer line the
+    // payload omitted was silently skipped — its TRANSFER_IN_PENDING was never
+    // cleared, no shrinkage was raised for it, and the transfer was still
+    // marked RECEIVED. Stock left the source and vanished with no record.
+    // Require every line to be accounted for; the UI already sends them all.
+    const payloadItemIds  = new Set(lines.map(l => l.itemId))
+    const uncoveredLines  = (t.lines ?? []).filter((tl: any) => !payloadItemIds.has(tl.itemId))
+    if (uncoveredLines.length > 0) {
+      throw {
+        statusCode: 422,
+        message: `Receive payload must account for every line on the transfer. Missing: ${uncoveredLines.map((l: any) => l.itemId).join(', ')}`,
+      }
     }
 
     let hasDispute           = false

@@ -3,11 +3,24 @@ import { buildStockAdjustmentShrinkageJournalEntry } from '../../lib/ledger.js'
 
 export class StockTakeService {
   async start(channelId: string, startedBy: string) {
-    const balances = await prisma.inventoryBalance.findMany({
-      where: { channelId }
-    })
-
     return prisma.$transaction(async (tx) => {
+      // FIX: nothing stopped a channel from having several OPEN stock takes at
+      // once. Each one snapshots its own expectedQty and each completion
+      // applies its own correction to the same balances, so the second
+      // completion re-applies a variance the first already settled. Serialize
+      // per channel and reject a second concurrent take outright.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('stock-take:' || ${channelId}))`
+
+      const existing = await tx.stockTake.findFirst({
+        where: { channelId, status: 'OPEN' },
+      })
+      if (existing) {
+        throw { statusCode: 409, message: 'This channel already has an open stock take' }
+      }
+
+      // Read balances inside the transaction so the snapshot matches the take
+      const balances = await tx.inventoryBalance.findMany({ where: { channelId } })
+
       const stockTake = await tx.stockTake.create({
         data: {
           channelId,
@@ -40,7 +53,7 @@ export class StockTakeService {
 
     const item = await prisma.stockTakeItem.findFirst({
       where: { stockTakeId, itemId },
-      include: { stockTake: { select: { status: true } } },
+      include: { stockTake: { select: { status: true, channelId: true } } },
     })
 
     if (!item) throw { statusCode: 404, message: 'Item not found in this stock take' }
@@ -48,14 +61,32 @@ export class StockTakeService {
       throw { statusCode: 400, message: 'Cannot record counts on a closed stock take' }
     }
 
+    // ── FIX: rebase the expectation on the CURRENT system quantity ──────
+    // expectedQty was snapshotted when the take was opened, but complete()
+    // applies `increment: discrepancy` to whatever the balance is at
+    // completion. Every sale, transfer or receipt that happened while the
+    // take was open therefore got subtracted a second time and booked as
+    // shrinkage: open at 100, sell 10 (balance 90), physically count 90 —
+    // nothing actually lost — and completion computed 90 − 100 = −10, wrote
+    // the balance down to 80 and posted a 10-unit shrinkage loss to the
+    // ledger. Recording the count against the live quantity makes the
+    // discrepancy a true variance, and leaves only movements between the
+    // count and completion (a short window) to the increment.
+    const balance = await prisma.inventoryBalance.findUnique({
+      where:  { itemId_channelId: { itemId, channelId: item.stockTake.channelId } },
+      select: { availableQty: true },
+    })
+    const expectedQty = balance?.availableQty ?? item.expectedQty
+
     // Always recompute discrepancy here — never trust a stale DB value
-    const discrepancy = recordedQty - item.expectedQty
+    const discrepancy = recordedQty - expectedQty
 
     return prisma.stockTakeItem.update({
       where: { id: item.id },
       data: {
+        expectedQty,   // rebased to the quantity the system believed at count time
         recordedQty,
-        discrepancy, // always a fresh safe integer
+        discrepancy,   // always a fresh safe integer
       }
     })
   }
