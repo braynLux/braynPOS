@@ -143,24 +143,48 @@ export async function recordRepayment(
       },
     })
 
-    const outstanding = Number(customer.outstandingCredit)
-
-    if (outstanding <= 0) {
-      throw { statusCode: 422, message: `${customer.name} has no outstanding credit balance to repay.` }
-    }
-
-    // Cap overpayment — apply only what is owed, surface excess as warning
-    let warning: string | undefined
-    let amountToApply = input.amount
-
-    if (input.amount > outstanding) {
-      amountToApply = outstanding
-      warning = `Payment of ${input.amount} exceeds outstanding balance of ${outstanding.toFixed(2)}. Only ${amountToApply.toFixed(2)} was applied.`
-    }
-
     if (!customer.channelId) {
       throw { statusCode: 422, message: `Customer "${customer.name}" has no channel assignment. Cannot record payment.` }
     }
+
+    // FIX: the balance was read here, capped in JS, then decremented. Two
+    // repayments arriving together both read the same outstanding figure, both
+    // capped against it, and both decremented — so a customer owing 1,000 who
+    // paid it off twice at once ended up at −1,000, with two CustomerPayment
+    // rows and two journal entries crediting 2,000 against a 1,000 debt.
+    // The cap and the decrement now happen in one statement: the row is locked
+    // first, so a concurrent repayment waits and then caps against what is
+    // genuinely left. `before − after` is the amount actually applied, which is
+    // what the receipt and the ledger entry must both use.
+    const [applied] = await tx.$queryRaw<Array<{
+      before: Prisma.Decimal; after: Prisma.Decimal; applied: Prisma.Decimal; repayments: number
+    }>>`
+      WITH locked AS (
+        SELECT "outstandingCredit" AS before
+        FROM customers
+        WHERE id = ${input.customerId}
+        FOR UPDATE
+      ),
+      upd AS (
+        UPDATE customers c
+        SET "outstandingCredit"    = c."outstandingCredit" - LEAST(${input.amount}::numeric, c."outstandingCredit"),
+            "successfulRepayments" = c."successfulRepayments" + 1
+        FROM locked
+        WHERE c.id = ${input.customerId}
+          AND c."outstandingCredit" > 0
+        RETURNING locked.before, c."outstandingCredit" AS after, c."successfulRepayments" AS repayments
+      )
+      SELECT before, after, (before - after) AS applied, repayments FROM upd
+    `
+
+    if (!applied) {
+      throw { statusCode: 422, message: `${customer.name} has no outstanding credit balance to repay.` }
+    }
+
+    const amountToApply = Number(applied.applied)
+    const warning = input.amount > amountToApply
+      ? `Payment of ${input.amount} exceeds outstanding balance of ${Number(applied.before).toFixed(2)}. Only ${amountToApply.toFixed(2)} was applied.`
+      : undefined
 
     await tx.customerPayment.create({
       data: {
@@ -173,14 +197,7 @@ export async function recordRepayment(
       },
     })
 
-    const updated = await tx.customer.update({
-      where: { id: input.customerId },
-      data:  {
-        outstandingCredit:    { decrement: amountToApply },
-        successfulRepayments: { increment: 1 },
-      },
-      select: { outstandingCredit: true, successfulRepayments: true },
-    })
+    const updated = { outstandingCredit: applied.after, successfulRepayments: applied.repayments }
 
     await buildCustomerRepaymentJournalEntry(
       tx as any, input.customerId, amountToApply, input.method, customer.channelId, actor.sub
