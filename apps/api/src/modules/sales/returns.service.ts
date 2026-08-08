@@ -86,6 +86,17 @@ export async function processReturn(
     }
 
     const saleItemById = new Map(sale.items.map(si => [si.id, si]))
+
+    // FIX: prior returns are tracked per itemId (StockMovement has no
+    // saleItemId), but the cap was a single sale line's quantity. The same
+    // itemId can span several SaleItem rows — one per serial — so a legitimate
+    // second-line return was rejected as if the first line had used up the
+    // allowance. Cap against the total quantity sold for that item instead.
+    const soldByItem = new Map<string, number>()
+    for (const si of sale.items) {
+      soldByItem.set(si.itemId, (soldByItem.get(si.itemId) ?? 0) + si.quantity)
+    }
+
     const created = []
     let refundAmount = 0
     let costAmount   = 0
@@ -96,12 +107,19 @@ export async function processReturn(
         throw { statusCode: 422, message: `Line item ${line.saleItemId} does not belong to this sale` }
       }
       const alreadyReturned = alreadyReturnedByItem.get(saleItem.itemId) ?? 0
-      if (line.quantity <= 0 || alreadyReturned + line.quantity > saleItem.quantity) {
+      const soldQty         = soldByItem.get(saleItem.itemId) ?? saleItem.quantity
+      if (line.quantity <= 0 || alreadyReturned + line.quantity > soldQty) {
         throw {
           statusCode: 422,
-          message: `Cannot return ${line.quantity} of item ${saleItem.itemId} — only ${saleItem.quantity - alreadyReturned} remaining returnable`,
+          message: `Cannot return ${line.quantity} of item ${saleItem.itemId} — only ${soldQty - alreadyReturned} remaining returnable`,
         }
       }
+      // FIX: running total must include lines processed earlier in THIS request.
+      // Without it, a payload repeating the same saleItemId (e.g. two lines of 5
+      // against a qty-5 line) had every line validated against the same stale
+      // pre-request figure, so all of them passed and stock/refunds were
+      // credited for more units than were ever sold.
+      alreadyReturnedByItem.set(saleItem.itemId, alreadyReturned + line.quantity)
 
       const movement = await tx.stockMovement.create({
         data: {
