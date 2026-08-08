@@ -114,14 +114,20 @@ export async function calculateCommission(saleId: string, tx?: any): Promise<Com
   for (const item of sale.items) {
     const cost = Number(item.costPriceSnapshot)
     if (cost <= 0) {
-      commissionLogger.warn({ 
-        saleId, itemId: item.itemId, userId: sale.performedBy 
+      commissionLogger.warn({
+        saleId, itemId: item.itemId, userId: sale.performedBy
       }, 'commission skipped — one or more items have zero/missing cost price')
       return null // Hard-block commission for the entire sale if any cost is missing
     }
     grossMargin += (Number(item.unitPrice) - cost) * item.quantity
-    grossMargin -= Number(item.discountAmount ?? 0)
   }
+  // FIX: line discounts were subtracted twice. Sale.discountAmount is stored by
+  // commitSaleOnce as `saleDiscount + totalLineDiscount` — it already contains
+  // every line's discount — but the loop above also subtracted each
+  // SaleItem.discountAmount before this ran. Margin came out short by the whole
+  // line-discount total, so commission was underpaid, and a discounted sale
+  // could be pushed under minMarginPercent, or to a margin of zero or less,
+  // and have its commission refused outright.
   grossMargin -= Number(sale.discountAmount ?? 0)
 
   if (grossMargin <= 0) {

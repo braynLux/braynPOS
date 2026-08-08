@@ -193,19 +193,30 @@ export class InvoiceService {
         throw { statusCode: 400, message: 'Cannot record payment against a voided invoice' }
       }
 
-      const newAmountPaid = Number(invoice.amountPaid) + amount
-      if (newAmountPaid > Number(invoice.totalAmount) + 0.01) {
+      // FIX: this read amountPaid, added to it in JS, and wrote the absolute
+      // result back. Two payments landing together both read the same starting
+      // figure, both passed the overpayment check against it, and the second
+      // write overwrote the first — so one payment vanished from the invoice
+      // while both still posted their own journal entry, leaving the ledger
+      // showing more collected than the invoice admits to. The addition, the
+      // overpayment guard and the status transition now happen in one
+      // statement, against the row's live value.
+      const applied = await tx.$executeRaw`
+        UPDATE invoices
+        SET "amountPaid" = "amountPaid" + ${amount}::numeric,
+            status = CASE
+              WHEN "amountPaid" + ${amount}::numeric >= "totalAmount" THEN 'PAID'::"InvoiceStatus"
+              WHEN "amountPaid" + ${amount}::numeric > 0              THEN 'PARTIALLY_PAID'::"InvoiceStatus"
+              ELSE status
+            END
+        WHERE id = ${id}
+          AND "amountPaid" + ${amount}::numeric <= "totalAmount" + 0.01
+      `
+      if (applied === 0) {
         throw { statusCode: 422, message: 'Payment exceeds the outstanding balance' }
       }
 
-      const status = newAmountPaid >= Number(invoice.totalAmount)
-        ? 'PAID'
-        : newAmountPaid > 0 ? 'PARTIALLY_PAID' : invoice.status
-
-      const updated = await tx.invoice.update({
-        where: { id },
-        data:  { amountPaid: newAmountPaid, status },
-      })
+      const updated = await tx.invoice.findFirstOrThrow({ where: { id } })
 
       // FIX: payments were only ever recorded on the Invoice row itself —
       // Cash/Bank never moved and Accounts Receivable never cleared on the
