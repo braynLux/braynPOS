@@ -133,6 +133,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!isAuthenticated) return null
 
+  // Call as SidebarContent(), not <SidebarContent />: as JSX it's a new component
+  // type every render, so React remounts the whole sidebar subtree on every
+  // pathname/sidebarOpen/offline-store change (same pitfall as CartPanel in pos/page.tsx).
   const SidebarContent = () => (
     <>
       <div className="sidebar-brand">
@@ -194,7 +197,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <>
           {/* Desktop sidebar */}
           <nav className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="main-sidebar">
-            <SidebarContent />
+            {SidebarContent()}
           </nav>
 
           {/* Mobile overlay backdrop */}

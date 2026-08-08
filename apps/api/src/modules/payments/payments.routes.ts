@@ -21,32 +21,39 @@ function validWebhookSecret(headerValue: unknown, secret: string): boolean {
 }
 
 export const paymentsRoutes: FastifyPluginAsync = async (app) => {
-  app.addHook('preHandler', authenticate)
+  // Authenticated routes live in their own encapsulated context so the
+  // `authenticate` preHandler hook doesn't leak onto the public /webhook
+  // route below — Fastify hooks apply to the whole encapsulation context
+  // they're added to, regardless of registration order, so `/webhook` must
+  // stay outside this nested `register` block to remain unauthenticated.
+  app.register(async (protectedRoutes) => {
+    protectedRoutes.addHook('preHandler', authenticate)
 
-  // GET /payments?saleId=xxx
-  app.get('/', {
-    config: RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
-  }, async (request) => {
-    const { saleId } = z.object({ saleId: z.string().uuid() }).parse(request.query)
+    // GET /payments?saleId=xxx
+    protectedRoutes.get('/', {
+      config: RATE.READ,
+      preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+    }, async (request) => {
+      const { saleId } = z.object({ saleId: z.string().uuid() }).parse(request.query)
 
-    const sale = await basePrisma.sale.findUnique({
-      where: { id: saleId },
-      select: { channelId: true },
-    })
+      const sale = await basePrisma.sale.findUnique({
+        where: { id: saleId },
+        select: { channelId: true },
+      })
 
-    if (!sale) return [] // If it truly doesn't exist, return empty list
+      if (!sale) return [] // If it truly doesn't exist, return empty list
 
-    // Isolation check
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
-      if (sale.channelId !== request.user.channelId) {
-        throw { statusCode: 403, message: 'Access denied: Sale belongs to another channel' }
+      // Isolation check
+      if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
+        if (sale.channelId !== request.user.channelId) {
+          throw { statusCode: 403, message: 'Access denied: Sale belongs to another channel' }
+        }
       }
-    }
 
-    return prisma.payment.findMany({
-      where: { saleId },
-      orderBy: { createdAt: 'desc' },
+      return prisma.payment.findMany({
+        where: { saleId },
+        orderBy: { createdAt: 'desc' },
+      })
     })
   })
 

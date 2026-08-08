@@ -350,6 +350,15 @@ async function commitSaleOnce(
               outstandingCredit: { increment: new Prisma.Decimal(deficit.toFixed(4)) }
             }
           })
+          // FIX: the stored Payment.amount must reflect the points actually
+          // deducted (currentPoints), not the full requested amount — reverseSale
+          // increments loyaltyPoints back by Payment.amount, so leaving it at the
+          // requested amount over-refunds points on void. The deficit itself is
+          // stashed in `reference` so reverseSale can undo the matching credit debt.
+          await tx.payment.updateMany({
+            where:  { saleId: newSale.id, method: 'LOYALTY_POINTS' },
+            data:   { amount: new Prisma.Decimal(currentPoints.toFixed(4)), reference: `LOYALTY_DEFICIT:${deficit.toFixed(4)}` },
+          })
           logAction({
             action:    AUDIT.OFFLINE_OVERRIDE,
             actorId:   actor.sub,
@@ -566,7 +575,17 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
 
     const loyaltyPayment = sale.payments.find(p => p.method === 'LOYALTY_POINTS')
     if (loyaltyPayment && sale.customerId) {
-      await tx.customer.update({ where: { id: sale.customerId }, data: { loyaltyPoints: { increment: Math.round(Number(loyaltyPayment.amount)) } } })
+      // Payment.amount here is the points actually deducted at commit time (see
+      // commitSaleOnce), not necessarily what was originally requested — refunding
+      // it is correct. If a deficit was converted to credit debt, undo that too.
+      const deficitMatch = loyaltyPayment.reference?.match(/^LOYALTY_DEFICIT:(-?\d+(\.\d+)?)$/)
+      await tx.customer.update({
+        where: { id: sale.customerId },
+        data: {
+          loyaltyPoints: { increment: Math.round(Number(loyaltyPayment.amount)) },
+          ...(deficitMatch ? { outstandingCredit: { decrement: new Prisma.Decimal(deficitMatch[1]) } } : {}),
+        },
+      })
     }
 
     const totalCost = sale.items.reduce((sum, item) => sum + (Number(item.costPriceSnapshot) * item.quantity), 0)

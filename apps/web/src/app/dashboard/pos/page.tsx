@@ -122,18 +122,27 @@ export default function POSPage() {
 // Inside POSPage component
   useEffect(() => {
     if (!token) return
-    
+
     // Background sync catalog if online
     if (isOnline) {
       CatalogSyncService.sync(token).catch(console.error)
     }
 
+    // FIX: guard against out-of-order responses — with no debounce, every
+    // keystroke fires its own request, and a slower earlier request (e.g. a
+    // broad single-letter query) can resolve after a later, narrower one and
+    // silently overwrite the correct results with stale ones. `cancelled` is
+    // set by the cleanup of the *next* effect run, so only the latest request
+    // for the current searchQuery is allowed to update state.
+    let cancelled = false
+
     if (isOnline) {
       // ── ONLINE SEARCH ──
       const query = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : ''
       api.get<{ data: ItemResult[] }>(`/items?limit=50${query}`, token)
-        .then((res) => setItems(res.data))
+        .then((res) => { if (!cancelled) setItems(res.data) })
         .catch(err => {
+          if (cancelled) return
           console.error('[POS Item Search Error]:', err)
           if ((err as any).status === 403) {
             toast.error('Item search restricted to your channel.', { id: 'security-block', icon: '🛡️' })
@@ -142,9 +151,11 @@ export default function POSPage() {
     } else {
       // ── OFFLINE SEARCH ──
       CatalogSyncService.searchOffline(searchQuery)
-        .then((res: any[]) => setItems(res))
+        .then((res: any[]) => { if (!cancelled) setItems(res) })
         .catch(console.error)
     }
+
+    return () => { cancelled = true }
   }, [token, searchQuery, isOnline])
 
   const handleBarcodeScan = (code: string) => {
