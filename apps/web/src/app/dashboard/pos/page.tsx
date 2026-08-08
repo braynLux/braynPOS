@@ -259,6 +259,8 @@ export default function POSPage() {
   )
 
   // ── Cart Panel (shared between desktop right column and mobile cart tab) ──
+  // Call as CartPanel(), not <CartPanel />: as JSX it's a new component type every
+  // render, so React remounts the subtree (and drops input focus) on each keystroke.
   const CartPanel = () => (
     <div className="pos-cart" id="pos-cart">
       <div className="pos-cart-header">
@@ -392,6 +394,7 @@ export default function POSPage() {
   )
 
   // ── Payment Panel ───────────────────────────────────────────────────
+  // Call as PaymentPanel(), not <PaymentPanel />: same remount-on-keystroke pitfall as CartPanel.
   const PaymentPanel = () => (
     <div className="pos-payment-panel">
       <div className="pos-payment-header">
@@ -643,8 +646,8 @@ export default function POSPage() {
 
         {/* Cart / Payment panel */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {mobileTab !== 'payment' ? <CartPanel /> : null}
-          {mobileTab === 'payment' && <PaymentPanel />}
+          {mobileTab !== 'payment' ? CartPanel() : null}
+          {mobileTab === 'payment' && PaymentPanel()}
         </div>
       </div>
 
@@ -692,14 +695,14 @@ export default function POSPage() {
         {/* Cart tab content */}
         {mobileTab === 'cart' && (
           <div className="pos-mobile-cart">
-            <CartPanel />
+            {CartPanel()}
           </div>
         )}
 
         {/* Payment tab content */}
         {mobileTab === 'payment' && (
           <div className="pos-mobile-payment">
-            <PaymentPanel />
+            {PaymentPanel()}
           </div>
         )}
 
