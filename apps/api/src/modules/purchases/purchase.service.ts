@@ -75,12 +75,19 @@ export class PurchaseService {
           where: { purchaseOrderId: data.purchaseOrderId },
         })
         const orderLineByItem = new Map(orderLines.map(line => [line.itemId, line]))
+        // FIX: each line was checked against the same stored receivedQty, so a
+        // payload repeating an item (two batches of the same product) had every
+        // line measured against the untouched remaining quantity and all of them
+        // passed — receiving more than was ever ordered. Accumulate per item.
+        const claimedByItem = new Map<string, number>()
         for (const line of data.lines) {
           const orderLine = orderLineByItem.get(line.itemId)
           if (!orderLine) {
             throw { statusCode: 422, message: `Item ${line.itemId} is not part of this purchase order` }
           }
-          if (orderLine.receivedQty + line.quantity > orderLine.quantity) {
+          const claimed = (claimedByItem.get(line.itemId) ?? 0) + line.quantity
+          claimedByItem.set(line.itemId, claimed)
+          if (orderLine.receivedQty + claimed > orderLine.quantity) {
             throw { statusCode: 422, message: `Received quantity for item ${line.itemId} exceeds the ordered quantity` }
           }
         }
@@ -157,8 +164,22 @@ export class PurchaseService {
       })
       const balanceMap = Object.fromEntries(existingBalances.map((b: any) => [b.itemId, b]))
 
-      // 4. Parallel WAC calculations and Upserts
-      await Promise.all(data.lines.map(async line => {
+      // 4. WAC calculations and upserts, aggregated per item
+      //
+      // FIX: this ran one upsert per LINE in parallel over a shared balanceMap
+      // snapshot. A purchase listing the same item on two lines — two batches at
+      // different unit costs, a routine way to receive goods — had both lines
+      // compute their new WAC from the same pre-purchase figures and then write
+      // `weightedAvgCost:` (a set, not an increment), so the second silently
+      // overwrote the first and the item's cost ignored one of the batches
+      // entirely, while availableQty incremented for both. Every downstream
+      // margin, COGS posting and below-cost warning inherited that wrong cost.
+      // Lines are now folded per item first, then applied one item at a time.
+      const perItem = new Map<string, {
+        quantity: number; value: number; retailPrice?: number; wholesalePrice?: number
+      }>()
+
+      for (const line of data.lines) {
         // Apportion Landed Costs
         let allocatedLandedCost = 0
         if (data.landedCosts) {
@@ -170,38 +191,52 @@ export class PurchaseService {
             }
           }
         }
-        const effectiveUnitCost = Number(line.unitCost) + (allocatedLandedCost / line.quantity)
+        // Landed cost is already apportioned to this line as a whole, so add it
+        // to the line's value directly rather than per-unit-then-times-quantity.
+        const lineValue = (Number(line.unitCost) * line.quantity) + allocatedLandedCost
 
-        const balance               = balanceMap[line.itemId]
-        const currentQty            = Number(balance?.availableQty || 0)
+        const agg = perItem.get(line.itemId) ?? { quantity: 0, value: 0 }
+        agg.quantity += line.quantity
+        agg.value    += lineValue
+        // Last line naming a price wins, matching the previous per-line behaviour
+        if (line.retailPrice    !== undefined) agg.retailPrice    = line.retailPrice
+        if (line.wholesalePrice !== undefined) agg.wholesalePrice = line.wholesalePrice
+        perItem.set(line.itemId, agg)
+      }
+
+      for (const [itemId, agg] of perItem) {
+        const balance          = balanceMap[itemId]
+        const currentQty       = Number(balance?.availableQty || 0)
         // No DB trigger exists — availableQty is NOT pre-updated by the stock movement insert.
         // WAC calculation: old stock value + new purchase value / total new qty
-        const oldWAC                = Number(balance?.weightedAvgCost || 0)
+        const oldWAC           = Number(balance?.weightedAvgCost || 0)
 
-        const totalValueBefore      = currentQty * oldWAC
-        const totalValueAfter       = totalValueBefore + (line.quantity * effectiveUnitCost)
-        const totalQtyAfter         = currentQty + line.quantity
-        const newWAC                = totalQtyAfter > 0 ? totalValueAfter / totalQtyAfter : effectiveUnitCost
+        const totalValueBefore = currentQty * oldWAC
+        const totalValueAfter  = totalValueBefore + agg.value
+        const totalQtyAfter    = currentQty + agg.quantity
+        const newWAC           = totalQtyAfter > 0
+          ? totalValueAfter / totalQtyAfter
+          : (agg.quantity > 0 ? agg.value / agg.quantity : oldWAC)
 
         // Single upsert combines metadata (retailPrice), WAC, and availableQty
         await tx.inventoryBalance.upsert({
-          where:  { itemId_channelId: { itemId: line.itemId, channelId: data.channelId } },
+          where:  { itemId_channelId: { itemId, channelId: data.channelId } },
           create: {
-            itemId:          line.itemId,
+            itemId,
             channelId:       data.channelId,
-            availableQty:    line.quantity,
+            availableQty:    agg.quantity,
             weightedAvgCost: newWAC,
-            retailPrice:     line.retailPrice    ?? 0,
-            wholesalePrice:  line.wholesalePrice ?? 0,
+            retailPrice:     agg.retailPrice    ?? 0,
+            wholesalePrice:  agg.wholesalePrice ?? 0,
           },
           update: {
-            availableQty:    { increment: line.quantity },
+            availableQty:    { increment: agg.quantity },
             weightedAvgCost: newWAC,
-            ...(line.retailPrice    !== undefined && { retailPrice:    line.retailPrice }),
-            ...(line.wholesalePrice !== undefined && { wholesalePrice: line.wholesalePrice }),
+            ...(agg.retailPrice    !== undefined && { retailPrice:    agg.retailPrice }),
+            ...(agg.wholesalePrice !== undefined && { wholesalePrice: agg.wholesalePrice }),
           },
         })
-      }))
+      }
 
       // Post double-entry journal entry
       const isCash = data.paymentMethod === 'CASH'
@@ -325,6 +360,21 @@ export class PurchaseService {
             notes: `Voiding purchase ${purchase.purchaseNo}`,
             performedBy: deletedBy,
           },
+        })
+
+        // FIX: voiding a purchase logged an ADJUSTMENT_OUT movement and
+        // reversed the ledger, but never took the quantity back out of
+        // inventory_balances — no DB trigger maintains that table, as create()
+        // above (and every other stock path in this codebase) has to do the
+        // write itself. The goods stayed on hand and sellable while Inventory
+        // Valuation was credited away, so stock on hand and the balance sheet
+        // disagreed by the full value of every voided purchase.
+        // updateMany rather than update: a no-op when the row is absent, and
+        // naming channelId keeps the multi-tenant extension from scoping this
+        // to the caller's channel instead of the purchase's.
+        await tx.inventoryBalance.updateMany({
+          where: { itemId: line.itemId, channelId: purchase.channelId },
+          data:  { availableQty: { decrement: line.quantity } },
         })
 
         // FIX 5: Soft-delete exactly line.quantity IN_STOCK serials,
