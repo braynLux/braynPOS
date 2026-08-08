@@ -128,12 +128,15 @@ export class TransfersService {
             }
           }
           if (line.serialIds?.length) {
-            for (const serialId of line.serialIds) {
-              await tx.serial.update({
-                where: { id: serialId },
-                data:  { status: 'TRANSFERRED' },
-              })
-            }
+            // FIX: the chosen serials used to be marked TRANSFERRED and nothing
+            // else, so which units belonged to which transfer was lost the
+            // moment the request finished. Stamp the transfer line on them so
+            // receive() and cancel() act only on this transfer's units.
+            const transferLine = transfer.lines.find(tl => tl.itemId === line.itemId)
+            await tx.serial.updateMany({
+              where: { id: { in: line.serialIds }, channelId: data.fromChannelId },
+              data:  { status: 'TRANSFERRED', transferLineId: transferLine?.id ?? null },
+            })
           }
 
           await tx.stockMovement.create({
@@ -309,15 +312,36 @@ export class TransfersService {
           totalShrinkageValue += shortage * Number(sourceBalance?.weightedAvgCost || 0)
         }
 
-        const serialsToMove = await tx.serial.findMany({
-          where:   { itemId: line.itemId, channelId: t.fromChannelId, status: 'TRANSFERRED' },
+        // FIX: this used to match any TRANSFERRED serial of the item at the
+        // source channel, so a concurrent transfer of the same item could have
+        // its units moved by whichever transfer was received first. Prefer the
+        // serials actually stamped with this transfer line; fall back to the
+        // old status-only match for transfers sent before transferLineId
+        // existed, which have no stamp to select on.
+        // Every query here names channelId explicitly. Serial is channel-isolated,
+        // and the multi-tenant extension injects the *caller's* channelId into any
+        // where clause that omits it — but the units are still parked at
+        // fromChannelId until this moment, so an un-scoped query run by a
+        // receiving (toChannel) user silently matches nothing.
+        const ownSerials = await tx.serial.findMany({
+          where:   { transferLineId: transferLine.id, channelId: t.fromChannelId, status: 'TRANSFERRED' },
           orderBy: { id: 'asc' },
           take:    line.receivedQuantity,
         })
+        const serialsToMove = ownSerials.length > 0
+          ? ownSerials
+          : await tx.serial.findMany({
+              where:   { itemId: line.itemId, channelId: t.fromChannelId, status: 'TRANSFERRED', transferLineId: null },
+              orderBy: { id: 'asc' },
+              take:    line.receivedQuantity,
+            })
         if (serialsToMove.length > 0) {
+          // FIX: the update omitted channelId too, so the extension scoped it to
+          // the receiver's channel and matched none of the source-channel rows —
+          // serials were never actually moved for any non-admin receiver.
           await tx.serial.updateMany({
-            where: { id: { in: serialsToMove.map((s: any) => s.id) } },
-            data:  { channelId: t.toChannelId, status: 'IN_STOCK', updatedAt: new Date() },
+            where: { id: { in: serialsToMove.map((s: any) => s.id) }, channelId: t.fromChannelId },
+            data:  { channelId: t.toChannelId, status: 'IN_STOCK', transferLineId: null, updatedAt: new Date() },
           })
         }
       }
@@ -376,10 +400,29 @@ export class TransfersService {
             performedBy:    cancelledBy,
           },
         })
-        await tx.serial.updateMany({
-          where: { itemId: line.itemId, channelId: t.fromChannelId, status: 'TRANSFERRED' },
-          data:  { status: 'IN_STOCK' },
+        // FIX: this matched every TRANSFERRED serial of the item at the source
+        // channel, so cancelling one transfer returned to stock the units still
+        // in flight on any other transfer of the same item. Restore only the
+        // units stamped with this line; for pre-stamp transfers, restore at most
+        // the quantity this line sent rather than the item's entire in-flight set.
+        const stamped = await tx.serial.updateMany({
+          where: { transferLineId: line.id, channelId: t.fromChannelId, status: 'TRANSFERRED' },
+          data:  { status: 'IN_STOCK', transferLineId: null },
         })
+        if (stamped.count === 0) {
+          const legacySerials = await tx.serial.findMany({
+            where:   { itemId: line.itemId, channelId: t.fromChannelId, status: 'TRANSFERRED', transferLineId: null },
+            orderBy: { id: 'asc' },
+            take:    line.sentQuantity,
+            select:  { id: true },
+          })
+          if (legacySerials.length > 0) {
+            await tx.serial.updateMany({
+              where: { id: { in: legacySerials.map((s: any) => s.id) }, channelId: t.fromChannelId },
+              data:  { status: 'IN_STOCK' },
+            })
+          }
+        }
       }
     })
 

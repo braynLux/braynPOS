@@ -314,16 +314,23 @@ model Serial {
   channelId String
   status    SerialStatus @default(IN_STOCK)
   saleId    String?
+  // Which transfer line this unit shipped on, set while status is TRANSFERRED
+  // and cleared on receipt/cancellation. Without it, receive() and cancel()
+  // could only select serials by (itemId, channelId, status) and so acted on
+  // units belonging to a different in-flight transfer of the same item.
+  transferLineId String?
   deletedAt DateTime?
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
   channel   Channel      @relation(fields: [channelId], references: [id])
   item      Item         @relation(fields: [itemId], references: [id])
   sale      Sale?        @relation(fields: [saleId], references: [id])
+  transferLine TransferLine? @relation(fields: [transferLineId], references: [id])
 
   @@unique([serialNo, itemId, channelId])
   @@index([itemId])
   @@index([channelId])
+  @@index([transferLineId])
   @@map("serials")
 }
 
@@ -668,6 +675,7 @@ model TransferLine {
   disputeReason    String?
   item             Item     @relation(fields: [itemId], references: [id])
   transfer         Transfer @relation(fields: [transferId], references: [id])
+  serials          Serial[]
 
   @@index([transferId])
   @@map("transfer_lines")
