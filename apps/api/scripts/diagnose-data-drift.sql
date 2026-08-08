@@ -4,17 +4,21 @@
 -- READ ONLY. Every statement here is a SELECT. Nothing is written, updated or
 -- deleted, so this is safe to run against production as-is.
 --
--- Four bugs fixed on branch claude/seeded-login-credentials-cbh5ip corrupted
--- stored state rather than merely behaving wrongly, so the damage they did
--- stays in the database after the fix ships. Each section below measures how
--- much of it there is. Run them, look at the numbers, then decide what (if
--- anything) is worth correcting — none of these queries decide that for you.
+-- Several bugs fixed on branch claude/seeded-login-credentials-cbh5ip
+-- corrupted stored state rather than merely behaving wrongly, so the damage
+-- they did stays in the database after the fix ships. Each section below
+-- measures how much of it there is. Run them, look at the numbers, then decide
+-- what (if anything) is worth correcting — none of these queries decide that
+-- for you.
+--
+--   Sections 1–5  stock and inventory value
+--   Sections 6–8  commission underpaid to staff
 --
 --   Usage:  psql "$DATABASE_URL" -f diagnose-data-drift.sql
 --   Single section: copy the query you want; they are independent.
 --
 -- ── The cutoff ──────────────────────────────────────────────────────────────
--- Sections 1 and 4 need to know when the fix reached production, because
+-- Sections 1, 4, 6 and 7 need to know when the fix reached production, because
 -- events after that point are already handled correctly and must not be
 -- counted as damage. Set it to your deploy time before running. Left at the
 -- default of now() every historical row is reported, which is right if you
@@ -328,6 +332,192 @@ LEFT JOIN stock_movements sm
 GROUP BY ch.name, i.sku, i.name, ib."availableQty", ib."weightedAvgCost"
 HAVING ib."availableQty" <> COALESCE(SUM(sm."quantityChange"), 0)
 ORDER BY drift_value DESC;
+
+-- ============================================================================
+-- 6. Commission computed on an understated margin
+-- ============================================================================
+-- calculateCommission subtracted each sale_items.discountAmount inside its
+-- item loop and then subtracted sales.discountAmount as well — but
+-- commitSaleOnce stores that column as `saleDiscount + totalLineDiscount`, so
+-- it already contained every line discount. Margin was therefore short by
+-- exactly the sale's line-discount total, which is what makes this one
+-- recoverable: the shortfall is a stored number, not a guess.
+--
+-- These rows have a commission entry, so the rate that was applied is known
+-- and the shortfall below is exact, not an estimate.
+--
+-- Sales where any item has a zero or missing cost are excluded: commission is
+-- deliberately refused for those, and that behaviour did not change.
+-- ============================================================================
+\echo ''
+\echo '=== 6. Commission entries computed on an understated margin ==='
+
+WITH sale_line_discounts AS (
+  SELECT
+    si."saleId",
+    SUM(si."discountAmount")                                AS line_discount_total,
+    SUM((si."unitPrice" - si."costPriceSnapshot") * si.quantity) AS raw_margin,
+    BOOL_OR(si."costPriceSnapshot" <= 0)                    AS has_zero_cost
+  FROM sale_items si
+  GROUP BY si."saleId"
+)
+SELECT
+  u.username                          AS salesperson,
+  ch.name                             AS channel,
+  s."receiptNo",
+  s."createdAt"::date                 AS sold_on,
+  ce.status                           AS commission_status,
+  ce."grossMargin"                    AS margin_recorded,
+  ROUND(d.raw_margin - s."discountAmount", 4) AS margin_correct,
+  d.line_discount_total               AS margin_shortfall,
+  ce."rateApplied"                    AS rate_pct,
+  ce."commissionAmount"               AS commission_paid,
+  ROUND(d.line_discount_total * ce."rateApplied" / 100, 2) AS commission_owed_extra
+FROM commission_entries ce
+JOIN sales s              ON s.id  = ce."saleId"
+JOIN sale_line_discounts d ON d."saleId" = s.id
+JOIN users u              ON u.id  = ce."userId"
+JOIN channels ch          ON ch.id = ce."channelId"
+WHERE s."deletedAt" IS NULL
+  AND ce.status <> 'VOIDED'
+  AND d.has_zero_cost IS NOT TRUE
+  AND d.line_discount_total > 0
+  AND ce."createdAt" < :fix_deployed_at::timestamptz
+ORDER BY commission_owed_extra DESC;
+
+
+-- ============================================================================
+-- 7. Sales that earned no commission at all because of the same bug
+-- ============================================================================
+-- Where line discounts were large enough, the doubled subtraction drove the
+-- computed margin to zero or below and calculateCommission returned early —
+-- no commission_entries row was ever written, and the sale.committed
+-- listener swallowed it, so nothing surfaced anywhere. These sales are
+-- invisible in section 6 precisely because they have no entry.
+--
+-- No rate can be read back for a sale that never produced an entry, so
+-- est_rate_pct is borrowed from that salesperson's most recent actual entry
+-- and est_commission_owed is an ESTIMATE. Where a person has no entries at
+-- all the rate is null and only the margin is shown — apply your own rule.
+--
+-- margin_when_computed reproduces what the buggy code arrived at. A value at
+-- or below zero is why the sale was skipped. Rows above zero were skipped for
+-- some other reason — most likely marginPercent falling under a rule's
+-- minMarginPercent, which this query cannot reconstruct — so treat those as
+-- candidates to review rather than confirmed losses.
+-- ============================================================================
+\echo ''
+\echo '=== 7. Sales skipped for commission entirely ==='
+
+WITH sale_line_discounts AS (
+  SELECT
+    si."saleId",
+    SUM(si."discountAmount")                                AS line_discount_total,
+    SUM((si."unitPrice" - si."costPriceSnapshot") * si.quantity) AS raw_margin,
+    BOOL_OR(si."costPriceSnapshot" <= 0)                    AS has_zero_cost
+  FROM sale_items si
+  GROUP BY si."saleId"
+),
+latest_rate AS (
+  SELECT DISTINCT ON ("userId") "userId", "rateApplied"
+  FROM commission_entries
+  WHERE status <> 'VOIDED'
+  ORDER BY "userId", "createdAt" DESC
+)
+SELECT
+  u.username                                   AS salesperson,
+  ch.name                                      AS channel,
+  s."receiptNo",
+  s."createdAt"::date                          AS sold_on,
+  ROUND(d.raw_margin - d.line_discount_total - s."discountAmount", 4) AS margin_when_computed,
+  ROUND(d.raw_margin - s."discountAmount", 4)  AS margin_correct,
+  lr."rateApplied"                             AS est_rate_pct,
+  ROUND((d.raw_margin - s."discountAmount") * lr."rateApplied" / 100, 2) AS est_commission_owed,
+  CASE
+    WHEN d.raw_margin - d.line_discount_total - s."discountAmount" <= 0
+      THEN 'margin driven to <= 0 by the double subtraction'
+    ELSE 'skipped for another reason - review'
+  END                                          AS likely_cause
+FROM sales s
+JOIN sale_line_discounts d ON d."saleId" = s.id
+JOIN users u               ON u.id  = s."performedBy"
+JOIN channels ch           ON ch.id = s."channelId"
+LEFT JOIN latest_rate lr   ON lr."userId" = s."performedBy"
+WHERE s."deletedAt" IS NULL
+  AND d.has_zero_cost IS NOT TRUE
+  AND d.line_discount_total > 0
+  -- would genuinely have earned something once computed correctly
+  AND d.raw_margin - s."discountAmount" > 0
+  AND NOT EXISTS (SELECT 1 FROM commission_entries ce WHERE ce."saleId" = s.id)
+  AND s."createdAt" < :fix_deployed_at::timestamptz
+ORDER BY est_commission_owed DESC NULLS LAST;
+
+
+-- ============================================================================
+-- 8. Total commission shortfall per salesperson
+-- ============================================================================
+-- Sections 6 and 7 added up per person, which is the figure to settle if you
+-- decide to make this good. exact_shortfall comes from entries whose real rate
+-- is known; estimated_shortfall covers the skipped sales and inherits the
+-- estimate caveat from section 7. Keep them in separate columns rather than
+-- adding them together, so an estimate never quietly becomes a payable.
+-- ============================================================================
+\echo ''
+\echo '=== 8. Commission shortfall per salesperson ==='
+
+WITH sale_line_discounts AS (
+  SELECT
+    si."saleId",
+    SUM(si."discountAmount")                                AS line_discount_total,
+    SUM((si."unitPrice" - si."costPriceSnapshot") * si.quantity) AS raw_margin,
+    BOOL_OR(si."costPriceSnapshot" <= 0)                    AS has_zero_cost
+  FROM sale_items si
+  GROUP BY si."saleId"
+),
+latest_rate AS (
+  SELECT DISTINCT ON ("userId") "userId", "rateApplied"
+  FROM commission_entries
+  WHERE status <> 'VOIDED'
+  ORDER BY "userId", "createdAt" DESC
+),
+underpaid AS (
+  SELECT ce."userId",
+         COUNT(*)                                                   AS sales_underpaid,
+         SUM(d.line_discount_total * ce."rateApplied" / 100)        AS exact_shortfall
+  FROM commission_entries ce
+  JOIN sales s               ON s.id = ce."saleId"
+  JOIN sale_line_discounts d ON d."saleId" = s.id
+  WHERE s."deletedAt" IS NULL AND ce.status <> 'VOIDED'
+    AND d.has_zero_cost IS NOT TRUE AND d.line_discount_total > 0
+    AND ce."createdAt" < :fix_deployed_at::timestamptz
+  GROUP BY ce."userId"
+),
+skipped AS (
+  SELECT s."performedBy"                                            AS "userId",
+         COUNT(*)                                                   AS sales_skipped,
+         SUM((d.raw_margin - s."discountAmount") * lr."rateApplied" / 100) AS estimated_shortfall
+  FROM sales s
+  JOIN sale_line_discounts d ON d."saleId" = s.id
+  LEFT JOIN latest_rate lr   ON lr."userId" = s."performedBy"
+  WHERE s."deletedAt" IS NULL AND d.has_zero_cost IS NOT TRUE
+    AND d.line_discount_total > 0
+    AND d.raw_margin - s."discountAmount" > 0
+    AND NOT EXISTS (SELECT 1 FROM commission_entries ce WHERE ce."saleId" = s.id)
+    AND s."createdAt" < :fix_deployed_at::timestamptz
+  GROUP BY s."performedBy"
+)
+SELECT
+  u.username                                    AS salesperson,
+  COALESCE(un.sales_underpaid, 0)               AS sales_underpaid,
+  ROUND(COALESCE(un.exact_shortfall, 0), 2)     AS exact_shortfall,
+  COALESCE(sk.sales_skipped, 0)                 AS sales_skipped,
+  ROUND(COALESCE(sk.estimated_shortfall, 0), 2) AS estimated_shortfall
+FROM users u
+LEFT JOIN underpaid un ON un."userId" = u.id
+LEFT JOIN skipped   sk ON sk."userId" = u.id
+WHERE un."userId" IS NOT NULL OR sk."userId" IS NOT NULL
+ORDER BY exact_shortfall + estimated_shortfall DESC;
+
 
 \echo ''
 \echo 'Done. Nothing was modified.'
