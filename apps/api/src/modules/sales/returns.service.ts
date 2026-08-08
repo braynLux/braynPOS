@@ -63,7 +63,9 @@ export async function processReturn(
   return prisma.$transaction(async (tx) => {
     const sale = await tx.sale.findFirstOrThrow({
       where:   { id: saleId, ...(channelId && { channelId }) },
-      include: { items: true },
+      // payments: the refund must be credited back to the same accounts the
+      // sale debited, pro-rata for a partial return
+      include: { items: true, payments: true },
     })
     if (sale.deletedAt) {
       throw { statusCode: 400, message: 'Cannot return items from a voided sale' }
@@ -160,7 +162,8 @@ export async function processReturn(
 
       await buildCreditNoteJournalEntry(
         tx as any, sale.id, refundAmount, proportionalTax, costAmount,
-        sale.channelId, actorId, sale.saleType === 'CREDIT'
+        sale.channelId, actorId, sale.saleType === 'CREDIT',
+        sale.payments, saleNetAmount
       )
 
       if (sale.saleType === 'CREDIT' && sale.customerId) {

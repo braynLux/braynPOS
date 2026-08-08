@@ -46,12 +46,31 @@ function toNum(val: number | { toNumber(): number } | undefined | null, fallback
 // FIX 2: Tax line support added. When taxAmount > 0, Sales Revenue is
 // credited only the pre-tax net, and Tax Payable receives the tax portion.
 // This keeps the journal balanced: Cash DR = Revenue CR + Tax Payable CR.
+//
+// FIX 3: The debit side was chosen from the isCredit flag alone, so every
+// non-credit sale landed in Cash on Hand no matter how it was actually paid —
+// mobile money, card and bank transfers all inflated physical cash, Bank
+// Account was never debited by a sale at all, and a loyalty redemption booked
+// an asset for money that was never received. The debit is now split across
+// accounts by payment method.
+const SALE_DEBIT_ACCOUNT: Record<string, string> = {
+  CASH:           ACCOUNT_IDS.CASH_ON_HAND,
+  MOBILE_MONEY:   ACCOUNT_IDS.BANK_ACCOUNT,
+  CARD:           ACCOUNT_IDS.BANK_ACCOUNT,
+  BANK_TRANSFER:  ACCOUNT_IDS.BANK_ACCOUNT,
+  // Redeemed points are not funds received — they are the cost of running the
+  // loyalty programme, so the "payment" is expensed rather than booked as cash.
+  LOYALTY_POINTS: ACCOUNT_IDS.GENERAL_EXPENSE,
+  CREDIT:         ACCOUNT_IDS.ACCOUNTS_RECEIVABLE,
+}
+
 export async function buildSaleJournalEntry(
   tx:        TransactionClient,
   sale:      SaleForJournal,
   totalCost: number,
   postedBy:  string,
-  isCredit = false
+  isCredit = false,
+  payments?: Array<{ method: string; amount: number | { toNumber(): number } }>
 ) {
   const netAmount = toNum(sale.netAmount)
   const taxAmount = toNum(sale.taxAmount)
@@ -68,13 +87,38 @@ export async function buildSaleJournalEntry(
     },
   })
 
-  const debitAccountId = isCredit
-    ? ACCOUNT_IDS.ACCOUNTS_RECEIVABLE
-    : ACCOUNT_IDS.CASH_ON_HAND
+  // A credit sale puts the whole balance on account regardless of the payment
+  // rows, matching the outstandingCredit increment the sale service posts.
+  // Without payment detail (older callers) fall back to the previous behaviour.
+  const debitByAccount = new Map<string, number>()
+  if (isCredit || !payments?.length) {
+    debitByAccount.set(
+      isCredit ? ACCOUNT_IDS.ACCOUNTS_RECEIVABLE : ACCOUNT_IDS.CASH_ON_HAND,
+      netAmount
+    )
+  } else {
+    for (const pmt of payments) {
+      const accountId = SALE_DEBIT_ACCOUNT[pmt.method] ?? ACCOUNT_IDS.CASH_ON_HAND
+      debitByAccount.set(accountId, (debitByAccount.get(accountId) ?? 0) + toNum(pmt.amount))
+    }
+    // commitSaleOnce already rejects a payment total that differs from
+    // netAmount by more than 0.0001, so this only absorbs float dust — but the
+    // entry must balance to the cent, so pin the largest line to the remainder.
+    const debitTotal = [...debitByAccount.values()].reduce((a, b) => a + b, 0)
+    const drift      = netAmount - debitTotal
+    if (drift !== 0 && debitByAccount.size > 0) {
+      const [largestAccount] = [...debitByAccount.entries()].sort((a, b) => b[1] - a[1])[0]
+      debitByAccount.set(largestAccount, debitByAccount.get(largestAccount)! + drift)
+    }
+  }
 
   const lines: any[] = [
     // FIX 1: netAmount replaces totalAmount — actual cash/AR created
-    { journalEntryId: je.id, accountId: debitAccountId,              debitAmount: netAmount,     creditAmount: 0 },
+    ...[...debitByAccount.entries()]
+      .filter(([, amount]) => amount !== 0)
+      .map(([accountId, amount]) => ({
+        journalEntryId: je.id, accountId, debitAmount: amount, creditAmount: 0,
+      })),
     { journalEntryId: je.id, accountId: ACCOUNT_IDS.SALES_REVENUE,   debitAmount: 0,             creditAmount: revenueAmount },
   ]
 
@@ -387,7 +431,13 @@ export async function buildCreditNoteJournalEntry(
   costAmount:   number,
   channelId:    string,
   postedBy:     string,
-  wasCredit = false
+  wasCredit = false,
+  // Original sale payments + that sale's net, so the refund is returned to the
+  // same accounts the sale debited (see SALE_DEBIT_ACCOUNT). Crediting Cash on
+  // Hand for a sale that debited Bank Account would leave both permanently
+  // skewed. A partial return credits each method its pro-rata share.
+  payments?:      Array<{ method: string; amount: number | { toNumber(): number } }>,
+  saleNetAmount?: number
 ) {
   const revenueAmount = netAmount - taxAmount
 
@@ -401,13 +451,34 @@ export async function buildCreditNoteJournalEntry(
     },
   })
 
-  const creditAccountId = wasCredit
-    ? ACCOUNT_IDS.ACCOUNTS_RECEIVABLE
-    : ACCOUNT_IDS.CASH_ON_HAND
+  const creditByAccount = new Map<string, number>()
+  const paymentBase     = saleNetAmount ?? netAmount
+  if (wasCredit || !payments?.length || paymentBase <= 0) {
+    creditByAccount.set(
+      wasCredit ? ACCOUNT_IDS.ACCOUNTS_RECEIVABLE : ACCOUNT_IDS.CASH_ON_HAND,
+      netAmount
+    )
+  } else {
+    const refundRatio = netAmount / paymentBase
+    for (const pmt of payments) {
+      const accountId = SALE_DEBIT_ACCOUNT[pmt.method] ?? ACCOUNT_IDS.CASH_ON_HAND
+      creditByAccount.set(accountId, (creditByAccount.get(accountId) ?? 0) + toNum(pmt.amount) * refundRatio)
+    }
+    const creditTotal = [...creditByAccount.values()].reduce((a, b) => a + b, 0)
+    const drift       = netAmount - creditTotal
+    if (drift !== 0 && creditByAccount.size > 0) {
+      const [largestAccount] = [...creditByAccount.entries()].sort((a, b) => b[1] - a[1])[0]
+      creditByAccount.set(largestAccount, creditByAccount.get(largestAccount)! + drift)
+    }
+  }
 
   const lines: any[] = [
     { journalEntryId: je.id, accountId: ACCOUNT_IDS.SALES_REVENUE, debitAmount: revenueAmount, creditAmount: 0 },
-    { journalEntryId: je.id, accountId: creditAccountId,            debitAmount: 0,             creditAmount: netAmount },
+    ...[...creditByAccount.entries()]
+      .filter(([, amount]) => amount !== 0)
+      .map(([accountId, amount]) => ({
+        journalEntryId: je.id, accountId, debitAmount: 0, creditAmount: amount,
+      })),
   ]
 
   if (taxAmount > 0) {

@@ -384,7 +384,7 @@ async function commitSaleOnce(
     }
 
     const isCredit = newSale.saleType === 'CREDIT'
-    await buildSaleJournalEntry(tx as any, newSale as any, totalCost, actor.sub, isCredit)
+    await buildSaleJournalEntry(tx as any, newSale as any, totalCost, actor.sub, isCredit, input.payments)
     return { sale: newSale, totalCost }
   })
 }
@@ -593,7 +593,7 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
     // netAmount, the actual figure the original sale posted to Cash/AR,
     // split by taxAmount, or a discounted/taxed sale leaves an unbalanced
     // ledger and a permanent phantom Tax Payable balance on void.
-    await buildCreditNoteJournalEntry(tx as any, sale.id, Number(sale.netAmount), Number(sale.taxAmount), totalCost, sale.channelId, actorId, sale.saleType === 'CREDIT')
+    await buildCreditNoteJournalEntry(tx as any, sale.id, Number(sale.netAmount), Number(sale.taxAmount), totalCost, sale.channelId, actorId, sale.saleType === 'CREDIT', sale.payments, Number(sale.netAmount))
 
     await tx.commissionEntry.updateMany({
       where: { saleId: sale.id, status: { in: ['PENDING', 'APPROVED'] } },
