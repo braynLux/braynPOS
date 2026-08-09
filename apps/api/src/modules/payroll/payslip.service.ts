@@ -211,7 +211,29 @@ export class PayslipService {
 
       const totalPayroll = run.lines.reduce((s, l) => s + n(l.netSalary), 0)
 
-      await buildPayrollJournalEntry(tx, salaryRunId, totalPayroll, run.channelId, postedBy)
+      // netSalary already carries commission, and equals
+      // (grossSalary + allowancesTotal − deductionsTotal) + commission, so
+      // net + deductions is the true gross earned including commission.
+      // employerCost is grossWithAllowances PLUS the employer's own
+      // contributions, so the contributions alone are what remains once the
+      // gross portion is taken back off.
+      const totalEmployeeDeductions = run.lines.reduce((s, l) => s + n(l.deductionsTotal), 0)
+      const totalEmployerContributions = run.lines.reduce(
+        (s, l) => s + Math.max(0, n(l.employerCost) - n(l.grossSalary) - n(l.allowancesTotal)),
+        0
+      )
+
+      await buildPayrollJournalEntry(
+        tx,
+        salaryRunId,
+        {
+          netPay:                totalPayroll,
+          employeeDeductions:    totalEmployeeDeductions,
+          employerContributions: totalEmployerContributions,
+        },
+        run.channelId,
+        postedBy
+      )
 
       await tx.salaryRun.update({
         where: { id: salaryRunId },
@@ -396,9 +418,10 @@ export class PayslipService {
       // accounting are handled by creating counter-entries (DR ↔ CR
       // swapped), not by erasing the originals.
       //
-      // We create a reversal journal entry with flipped debits/credits:
-      //   Original:  DR Payroll Expense / CR Cash on Hand
-      //   Reversal:  DR Cash on Hand    / CR Payroll Expense
+      // We create a reversal journal entry with flipped debits/credits.
+      // This mirrors whatever lines the original entry carried — currently
+      //   DR Payroll Expense / CR Cash on Hand + CR Tax Payable
+      // so the reversal also clears the statutory liability the run raised.
       const journals = await tx.journalEntry.findMany({
         where:   { referenceId: id, referenceType: 'PAYROLL' },
         include: { lines: true },

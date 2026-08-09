@@ -3,15 +3,24 @@ import { logAction, AUDIT } from '../../lib/audit.js'
 
 export class SessionsService {
   async open(userId: string, channelId: string, openingFloat: number, actorRole: string) {
-    const existing = await prisma.salesSession.findFirst({
-      where: { userId, channelId, status: 'OPEN' },
-    })
-    if (existing) {
-      throw { statusCode: 409, message: 'You already have an open session at this channel' }
-    }
+    // FIX: check-then-create raced — a double-tap or client retry could send
+    // two concurrent opens that both pass the "no existing OPEN session" check
+    // before either INSERT commits, leaving two OPEN sessions for one cashier.
+    // An advisory lock scoped to (userId, channelId) serializes the pair so the
+    // second call always sees the first's session once it holds the lock.
+    const session = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId} || ':' || ${channelId}))`
 
-    const session = await prisma.salesSession.create({
-      data: { userId, channelId, openingFloat, status: 'OPEN' },
+      const existing = await tx.salesSession.findFirst({
+        where: { userId, channelId, status: 'OPEN' },
+      })
+      if (existing) {
+        throw { statusCode: 409, message: 'You already have an open session at this channel' }
+      }
+
+      return tx.salesSession.create({
+        data: { userId, channelId, openingFloat, status: 'OPEN' },
+      })
     })
 
     // FIX 4: Audit log session openings

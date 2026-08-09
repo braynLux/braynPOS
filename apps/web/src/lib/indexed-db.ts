@@ -1,11 +1,22 @@
 import Dexie, { type Table } from 'dexie';
 
+// Single source of truth for the sync state of an offline sale. The Zustand
+// store (OfflineSale) and this Dexie row describe the same record and are
+// assigned to each other when persisting, so they must not carry separate
+// copies of this union — adding 'conflict' to one and not the other is what
+// broke the build.
+//
+// 'conflict': the server accepted the payload but filed it for manager review
+// instead of committing it. Distinct from 'synced' (no sale exists yet) and
+// from 'failed' (retrying cannot help; the decision is the manager's).
+export type SaleSyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict';
+
 export interface LocalSale {
   id: string;
   offlineReceiptNo: string;
   saleData: any;
   createdAt: string;
-  syncStatus: 'pending' | 'syncing' | 'synced' | 'failed';
+  syncStatus: SaleSyncStatus;
   error?: string;
 }
 
