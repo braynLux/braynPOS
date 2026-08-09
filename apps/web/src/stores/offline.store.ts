@@ -9,7 +9,11 @@ interface OfflineSale {
   offlineReceiptNo: string
   saleData: Record<string, unknown>
   createdAt: string
-  syncStatus: 'pending' | 'syncing' | 'synced' | 'failed'
+  // 'conflict': the server accepted the payload but could not commit it and
+  // filed it for manager review. Deliberately distinct from 'synced' (the sale
+  // does not exist yet) and from 'failed' (retrying cannot help — the decision
+  // is the manager's), so it is neither cleared away nor retried forever.
+  syncStatus: 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict'
   error?: string
 }
 
@@ -21,6 +25,7 @@ interface OfflineState {
   markSyncing: (id: string) => void
   markSynced: (id: string) => void
   markFailed: (id: string, error: string) => void
+  markConflict: (id: string, error: string) => void
   removeSynced: () => void
   getPendingCount: () => number
   syncPendingSales: (api: any, token: string) => Promise<void>
@@ -104,6 +109,13 @@ export const useOfflineStore = create<OfflineState>()(
           ),
         })),
 
+      markConflict: (id, error) =>
+        set((state) => ({
+          pendingSales: state.pendingSales.map((s) =>
+            s.id === id ? { ...s, syncStatus: 'conflict' as const, error } : s
+          ),
+        })),
+
       removeSynced: () =>
         set((state) => ({
           pendingSales: state.pendingSales.filter((s) => s.syncStatus !== 'synced'),
@@ -113,9 +125,9 @@ export const useOfflineStore = create<OfflineState>()(
         get().pendingSales.filter((s) => s.syncStatus === 'pending' || s.syncStatus === 'failed').length,
 
       syncPendingSales: async (api, token) => {
-        const { pendingSales, markSyncing, markSynced, markFailed, removeSynced } = get()
+        const { pendingSales, markSyncing, markSynced, markFailed, markConflict, removeSynced } = get()
         const toSync = pendingSales.filter(s => s.syncStatus === 'pending' || s.syncStatus === 'failed')
-        
+
         if (toSync.length === 0) return
 
         console.log(`[OfflineSync] Attempting to sync ${toSync.length} sales...`)
@@ -123,13 +135,24 @@ export const useOfflineStore = create<OfflineState>()(
         for (const sale of toSync) {
           markSyncing(sale.id)
           try {
-            await api.post('/sales/sync-offline', {
+            const res = await api.post('/sales/sync-offline', {
               offlineReceiptNo: sale.offlineReceiptNo,
               saleData: sale.saleData
             }, token, {
               'Idempotency-Key': sale.id // Use the sale UUID as idempotency key
             })
-            markSynced(sale.id)
+            // FIX: a conflict comes back as HTTP 202 with status 'conflict' —
+            // the server took the payload but filed it for manager review
+            // instead of committing it. 202 passes res.ok, so this used to fall
+            // straight into markSynced and removeSynced: the cashier was told
+            // the sale had gone through and the record was deleted from the
+            // device, while the sale did not exist and might yet be voided.
+            if (res?.status === 'conflict') {
+              console.warn(`[OfflineSync] Conflict for ${sale.offlineReceiptNo} — awaiting manager review:`, res.conflictId)
+              markConflict(sale.id, res.message || 'Awaiting manager review')
+            } else {
+              markSynced(sale.id)
+            }
           } catch (err: any) {
             console.error(`[OfflineSync] Failed for ${sale.offlineReceiptNo}:`, err.message)
             markFailed(sale.id, err.message)

@@ -483,6 +483,17 @@ export async function findSales(query: any, actor?: TokenPayload) {
   ])
 
   // Margin reporting
+  //
+  // FIX 1: the payment-method branch queried "sale_payments", which does not
+  // exist — the Payment model maps to "payments". Filtering the sales list by
+  // payment method therefore failed the whole request with a Postgres
+  // "relation does not exist" error rather than returning any results.
+  //
+  // FIX 2: this only mirrored channelId, performedBy and the date range, so
+  // saleType, customerId and sessionId narrowed the list and its revenue total
+  // while the margin beside them stayed computed over every sale in the
+  // channel. Filtering to one customer showed that customer's revenue next to
+  // the whole channel's margin, making margin look wildly larger than revenue.
   const marginRes = await prisma.$queryRaw<any[]>`
     SELECT COALESCE(SUM("lineTotal" - ("costPriceSnapshot" * "quantity")), 0) as "margin"
     FROM   "sale_items" si
@@ -490,9 +501,12 @@ export async function findSales(query: any, actor?: TokenPayload) {
     WHERE  s."deletedAt" IS NULL
     ${where.channelId ? Prisma.sql`AND s."channelId" = ${where.channelId}` : Prisma.sql``}
     ${query.performedBy ? Prisma.sql`AND s."performedBy" = ${query.performedBy}` : Prisma.sql``}
+    ${query.saleType ? Prisma.sql`AND s."saleType"::text = ${query.saleType}` : Prisma.sql``}
+    ${query.customerId ? Prisma.sql`AND s."customerId" = ${query.customerId}` : Prisma.sql``}
+    ${query.sessionId ? Prisma.sql`AND s."sessionId" = ${query.sessionId}` : Prisma.sql``}
     ${query.paymentMethod ? Prisma.sql`AND EXISTS (
-      SELECT 1 FROM "sale_payments" sp 
-      WHERE sp."saleId" = s.id 
+      SELECT 1 FROM "payments" sp
+      WHERE sp."saleId" = s.id
       AND sp."method"::text = ${query.paymentMethod}
     )` : Prisma.sql``}
     ${(where.createdAt as any)?.gte ? Prisma.sql`AND s."createdAt" >= ${(where.createdAt as any).gte}` : Prisma.sql``}
@@ -637,19 +651,53 @@ export async function syncOfflineSale(payload: any, actor: TokenPayload, idempot
     throw { statusCode: 409, message: 'Sync in progress for this sale...' }
   }
 
+  // Mirrors resolveConflict's committedSale guard: once commitSale returns, a
+  // sale exists durably and no later failure in this function can undo it.
+  let committedSale: any = null
+
   try {
     // 3. Commit the sale (skipping stock check)
-    const sale = await commitSale(payload.saleData, actor, { 
+    const sale = await commitSale(payload.saleData, actor, {
       offlineReceiptNo: payload.offlineReceiptNo,
       deviceDate: payload.deviceDate,
-      skipStockCheck: true 
+      skipStockCheck: true
     })
+    committedSale = sale
 
     const result = { status: 'synced', receiptNo: (sale as any).receiptNo, id: (sale as any).id }
-    await storeIdempotencyResult(idempotencyKey, result, 201)
+    try {
+      await storeIdempotencyResult(idempotencyKey, result, 201)
+    } catch (storeErr) {
+      // FIX: this used to fall through to the catch below, which released the
+      // idempotency lock and rethrew. The sale was already committed, so the
+      // device's retry found no stored result, took the lock again and synced
+      // the same offline sale a second time — a duplicate sale, duplicate
+      // stock movements and a duplicate ledger entry, with nothing to detect
+      // it (offlineReceiptNo carries no unique constraint).
+      // The sync itself succeeded, so report success and let the lock expire
+      // on its own rather than reopening the window for a retry.
+      console.error(
+        `[syncOfflineSale] Sale ${result.receiptNo} committed but recording the idempotency result failed. ` +
+        `Lock left in place to block a duplicate retry; it expires on its own.`, storeErr
+      )
+    }
     return result
 
   } catch (err: any) {
+    // A sale that already exists must never be re-synced by a retry, whatever
+    // failed afterwards — releasing the lock or filing a conflict here would
+    // both invite a duplicate.
+    if (committedSale) {
+      console.error(
+        `[syncOfflineSale] Sale ${committedSale.receiptNo} committed but post-commit handling failed. ` +
+        `Not releasing the lock and not filing a conflict — needs manual reconciliation.`, err
+      )
+      throw {
+        statusCode: 500,
+        message: `Sale ${committedSale.receiptNo} was synced but finalizing it failed. Do not retry — contact support for manual reconciliation.`,
+      }
+    }
+
     // 4. Handle CONFLICTS (e.g. Serial # Collision or Inventory exhausted elsewhere)
     // P2002 = Unique constraint violation (likely Serial Number or Receipt No)
     if (err.code === 'P2002' || err.statusCode === 422) {
