@@ -60,6 +60,11 @@ export async function executeTool(
           where: {
             receiptNo: input.receiptNo,
             channelId: channel.id,   // FIX 1: scoped to channel
+            // FIX: voided sales were returned as though they were live, so the
+            // agent would confirm a reversed transaction to whoever asked. The
+            // soft-delete middleware that would have excluded them is never
+            // registered on the client, so it has to be filtered here.
+            deletedAt: null,
           },
           include: {
             items:    { include: { item: { select: { name: true, sku: true } } } },
