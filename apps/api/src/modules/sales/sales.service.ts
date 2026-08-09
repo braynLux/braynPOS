@@ -592,12 +592,12 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
       // Payment.amount here is the points actually deducted at commit time (see
       // commitSaleOnce), not necessarily what was originally requested — refunding
       // it is correct. If a deficit was converted to credit debt, undo that too.
-      const deficitMatch = loyaltyPayment.reference?.match(/^LOYALTY_DEFICIT:(-?\d+(\.\d+)?)$/)
+      const deficit = loyaltyPayment.reference?.match(/^LOYALTY_DEFICIT:(-?\d+(\.\d+)?)$/)?.[1]
       await tx.customer.update({
         where: { id: sale.customerId },
         data: {
           loyaltyPoints: { increment: Math.round(Number(loyaltyPayment.amount)) },
-          ...(deficitMatch ? { outstandingCredit: { decrement: new Prisma.Decimal(deficitMatch[1]) } } : {}),
+          ...(deficit ? { outstandingCredit: { decrement: new Prisma.Decimal(deficit) } } : {}),
         },
       })
     }

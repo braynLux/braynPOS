@@ -106,9 +106,9 @@ export async function buildSaleJournalEntry(
     // entry must balance to the cent, so pin the largest line to the remainder.
     const debitTotal = [...debitByAccount.values()].reduce((a, b) => a + b, 0)
     const drift      = netAmount - debitTotal
-    if (drift !== 0 && debitByAccount.size > 0) {
-      const [largestAccount] = [...debitByAccount.entries()].sort((a, b) => b[1] - a[1])[0]
-      debitByAccount.set(largestAccount, debitByAccount.get(largestAccount)! + drift)
+    const largest    = [...debitByAccount.entries()].sort((a, b) => b[1] - a[1])[0]
+    if (drift !== 0 && largest) {
+      debitByAccount.set(largest[0], largest[1] + drift)
     }
   }
 
@@ -488,9 +488,9 @@ export async function buildCreditNoteJournalEntry(
     }
     const creditTotal = [...creditByAccount.values()].reduce((a, b) => a + b, 0)
     const drift       = netAmount - creditTotal
-    if (drift !== 0 && creditByAccount.size > 0) {
-      const [largestAccount] = [...creditByAccount.entries()].sort((a, b) => b[1] - a[1])[0]
-      creditByAccount.set(largestAccount, creditByAccount.get(largestAccount)! + drift)
+    const largest     = [...creditByAccount.entries()].sort((a, b) => b[1] - a[1])[0]
+    if (drift !== 0 && largest) {
+      creditByAccount.set(largest[0], largest[1] + drift)
     }
   }
 

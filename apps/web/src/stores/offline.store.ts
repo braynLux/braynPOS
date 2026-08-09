@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage, type StorageValue } from 'zustand/middleware'
-import { db } from '@/lib/indexed-db'
+import { db, type SaleSyncStatus } from '@/lib/indexed-db'
 
 const uuidv4 = () => typeof crypto !== 'undefined' ? crypto.randomUUID() : Math.random().toString(36).substring(7);
 
@@ -9,11 +9,9 @@ interface OfflineSale {
   offlineReceiptNo: string
   saleData: Record<string, unknown>
   createdAt: string
-  // 'conflict': the server accepted the payload but could not commit it and
-  // filed it for manager review. Deliberately distinct from 'synced' (the sale
-  // does not exist yet) and from 'failed' (retrying cannot help — the decision
-  // is the manager's), so it is neither cleared away nor retried forever.
-  syncStatus: 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict'
+  // Shared with the Dexie row this is persisted into — see SaleSyncStatus in
+  // lib/indexed-db.ts for what each state means.
+  syncStatus: SaleSyncStatus
   error?: string
 }
 
