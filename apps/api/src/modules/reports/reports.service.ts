@@ -62,9 +62,15 @@ export class ReportsService {
     const cogs = Number(cogsRaw[0]?.cogs ?? 0)
     const unreliableCount = Number(cogsRaw[0]?.unreliableCount ?? 0)
 
+    // FIX: soft-deleted rows were counted. lib/soft-delete.middleware.ts was
+    // written to strip these automatically but is never registered on the
+    // client, so every query has to filter explicitly. A voided expense keeps
+    // reducing reported profit here even though its ledger entry was already
+    // reversed — so this summary and the ledger P&L disagree.
     const expenses = await prisma.expense.aggregate({
       where: {
         channelId,
+        deletedAt: null,
         createdAt: { gte: start, lte: end },
       },
       _sum:   { amount: true },
@@ -84,9 +90,12 @@ export class ReportsService {
 
     const topCustomers = await this.topCustomers(channelId, startDate, endDate, 5)
 
+    // Voiding a purchase sets deletedAt but leaves status COMMITTED, so
+    // filtering on status alone kept voided purchases in the total.
     const purchases = await prisma.purchase.aggregate({
       where: {
         channelId,
+        deletedAt: null,
         createdAt: { gte: start, lte: end },
         status:    'COMMITTED',
       },

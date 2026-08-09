@@ -299,6 +299,10 @@ export class PurchaseService {
     const skip  = (page - 1) * limit
 
     const where: Prisma.PurchaseWhereInput = {
+      // Voided purchases keep status COMMITTED and are only marked by
+      // deletedAt, and the soft-delete middleware that would have hidden them
+      // is never registered on the client — so they have to be excluded here.
+      deletedAt: null,
       ...(query.channelId && { channelId: query.channelId }),
       ...(query.startDate || query.endDate ? {
         createdAt: {

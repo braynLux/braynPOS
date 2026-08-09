@@ -84,8 +84,12 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
             : Prisma.empty}
       `,
       // Expenses
+      // deletedAt filtered explicitly, matching the raw sales query above —
+      // the soft-delete middleware that would do this automatically is never
+      // registered, so a voided expense otherwise still counts against today.
       prisma.expense.aggregate({
         where: {
+          deletedAt: null,
           createdAt: { gte: today },
           ...(effectiveChannelId && { channelId: effectiveChannelId }),
         },

@@ -6,6 +6,7 @@ export class SerialsService {
     return prisma.serial.findMany({
       where: {
         itemId,
+        deletedAt: null,
         ...(channelId && { channelId }),
       },
       include: {
@@ -16,8 +17,12 @@ export class SerialsService {
   }
  
   async searchSerials(query: string, requestingUser: { role: string; channelId: string | null }) {
+    // deletedAt filtered on every read below: serials are soft-deleted when
+    // the purchase that created them is voided, and the soft-delete middleware
+    // meant to hide them is never registered on the Prisma client.
     const where: any = {
       serialNo: { contains: query, mode: 'insensitive' },
+      deletedAt: null,
     }
  
     // Role-based filtering
@@ -40,7 +45,7 @@ export class SerialsService {
   }
  
   async findBySerialNo(serialNo: string, requestingUser?: { role: string; channelId: string | null }) {
-    const where: any = { serialNo }
+    const where: any = { serialNo, deletedAt: null }
     
     // If not admin/super_admin, restrict to user's channel if they have one
     if (requestingUser && !['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(requestingUser.role)) {
@@ -65,6 +70,7 @@ export class SerialsService {
         itemId,
         channelId,
         status: 'IN_STOCK',
+        deletedAt: null,
       },
       orderBy: { serialNo: 'asc' },
     })
@@ -97,7 +103,7 @@ export class SerialsService {
  
   async writeOff(id: string, channelId?: string) {
     const serial = await prisma.serial.findFirst({
-      where: { id, ...(channelId && { channelId }) },
+      where: { id, deletedAt: null, ...(channelId && { channelId }) },
       select: { id: true },
     })
     if (!serial) {
