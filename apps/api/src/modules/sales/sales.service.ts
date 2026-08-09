@@ -602,6 +602,43 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
       })
     }
 
+    // FIX: points EARNED on the sale were never clawed back. The loyalty
+    // listener awards points on every sale.committed, but reversing the sale
+    // only ever refunded points that had been SPENT on it — so a sale that was
+    // rung up and voided left the customer holding points for a purchase that
+    // no longer exists, and repeating that cycle mints points from nothing.
+    // Scoped by referenceId so only this sale's accrual is undone, and floored
+    // at zero so a customer who has already spent the points is not driven
+    // negative by the reversal.
+    if (sale.customerId) {
+      const earned = await tx.loyaltyTransaction.findFirst({
+        where: { referenceId: sale.id, type: 'EARN', customerId: sale.customerId },
+      })
+      if (earned && earned.points > 0) {
+        const customer = await tx.customer.findUnique({
+          where:  { id: sale.customerId },
+          select: { loyaltyPoints: true, channelId: true },
+        })
+        const clawback = Math.min(earned.points, Number(customer?.loyaltyPoints ?? 0))
+        if (clawback > 0) {
+          await tx.customer.update({
+            where: { id: sale.customerId },
+            data:  { loyaltyPoints: { decrement: clawback } },
+          })
+        }
+        await tx.loyaltyTransaction.create({
+          data: {
+            customerId:  sale.customerId,
+            channelId:   earned.channelId,
+            type:        'REDEEM',
+            points:      -clawback,
+            referenceId: sale.id,
+            notes:       `Reversal of points earned on voided sale ${sale.receiptNo}`,
+          },
+        })
+      }
+    }
+
     const totalCost = sale.items.reduce((sum, item) => sum + (Number(item.costPriceSnapshot) * item.quantity), 0)
     // FIX: was reversing totalAmount (pre-discount gross) — must reverse
     // netAmount, the actual figure the original sale posted to Cash/AR,

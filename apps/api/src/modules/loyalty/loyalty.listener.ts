@@ -20,7 +20,7 @@ export function startLoyaltyListener() {
       if (!sale || !sale.customerId) return
 
       // Calculate total gross margin for the sale
-      const totalMargin = sale.items.reduce((sum, item) => {
+      const rawMargin = sale.items.reduce((sum, item) => {
         const cost = Number(item.costPriceSnapshot)
         const price = Number(item.unitPrice)
         // Only award points on items where cost is known (> 0)
@@ -29,6 +29,14 @@ export function startLoyaltyListener() {
         }
         return sum
       }, 0)
+
+      // FIX: discounts were ignored entirely, so points were awarded on the
+      // margin the sale would have made at full price. commitSaleOnce stores
+      // Sale.discountAmount as saleDiscount + every line discount, so
+      // subtracting it once gives the margin actually earned. A sale grossing
+      // 1,000 of raw margin that was discounted by 800 was paying out 20 points
+      // instead of 4 — and a sale discounted below cost still paid out.
+      const totalMargin = rawMargin - Number(sale.discountAmount ?? 0)
 
       if (totalMargin > 0) {
         await loyaltyService.earnPoints(sale.customerId, sale.id, totalMargin)

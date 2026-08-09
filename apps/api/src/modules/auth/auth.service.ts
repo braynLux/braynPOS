@@ -7,6 +7,10 @@ import { authLogger } from '../../lib/logger.js'
 import type { LoginInput, RegisterInput, ChangePasswordInput } from './auth.schema.js'
 
 const MAX_FAILED_ATTEMPTS = 10
+// Lock duration must match the failure counter's own window (see redis.expire
+// below): the counter was always meant to be transient, and the lock it
+// triggers has to be too.
+const LOCKOUT_SECONDS = 900
 
 export class AuthService {
 
@@ -27,6 +31,24 @@ export class AuthService {
       throw { statusCode: 403, message: 'Account is inactive. Contact your administrator.' }
     }
 
+    // FIX: failed attempts used to flip status to INACTIVE, which is the same
+    // flag an administrator sets to deactivate a user and has no expiry — so a
+    // burst of wrong passwords disabled the account permanently, and anyone who
+    // knew a username could disable that person at will, the only SUPER_ADMIN
+    // included, with no route back in short of editing the database. (Until the
+    // Redis fallback was repaired this never fired, because the counter reset to
+    // 1 every attempt; repairing it made this reachable.) The lock is now
+    // time-boxed and held outside the user record, so an automatic lockout can
+    // no longer be mistaken for a deliberate deactivation.
+    const lockedFor = await redis.get(`login_locked:${user.id}`)
+    if (lockedFor) {
+      authLogger.warn({ userId: user.id }, 'login rejected — temporarily locked after failed attempts')
+      throw {
+        statusCode: 403,
+        message: `Too many failed attempts. Try again in ${Math.ceil(LOCKOUT_SECONDS / 60)} minutes.`,
+      }
+    }
+
     let valid = false
     try {
       valid = await verifyPassword(user.passwordHash, input.password)
@@ -40,12 +62,15 @@ export class AuthService {
       await redis.expire(failKey, 900)  // 15-minute window
 
       if (failures >= MAX_FAILED_ATTEMPTS) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data:  { status: 'INACTIVE' },
-        })
-        authLogger.error({ userId: user.id, failures }, 'account locked — too many failed login attempts')
-        throw { statusCode: 403, message: 'Account locked after too many failed attempts. Contact your administrator.' }
+        // Time-boxed lock, and clear the counter so the next window starts
+        // clean rather than re-locking on the very first attempt afterwards.
+        await redis.setex(`login_locked:${user.id}`, LOCKOUT_SECONDS, '1')
+        await redis.del(failKey)
+        authLogger.error({ userId: user.id, failures }, 'account temporarily locked — too many failed login attempts')
+        throw {
+          statusCode: 403,
+          message: `Too many failed attempts. Try again in ${Math.ceil(LOCKOUT_SECONDS / 60)} minutes.`,
+        }
       }
 
       authLogger.warn({ userId: user.id, username: input.username, failures }, 'login failed — wrong password')
