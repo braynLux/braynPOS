@@ -116,6 +116,28 @@ async function start() {
     process.exit(1)
   }
 
+  // ── Last-resort guard for unhandled async failures ──────────────────
+  // Node terminates the process on an unhandled rejection by default, and
+  // async EventEmitter listeners are an easy way to produce one: the emitter
+  // neither awaits nor catches the promise a listener returns, so a single
+  // failed background alert or notification could take the whole API down
+  // mid-request. Individual listeners are guarded at their own call sites;
+  // this only exists so that an unguarded one added later degrades to a log
+  // line instead of an outage. It deliberately does not exit — a rejected
+  // side-effect promise says nothing about whether the server can keep
+  // serving traffic.
+  process.on('unhandledRejection', (reason) => {
+    app.log.error({ err: reason }, 'Unhandled promise rejection — surfaced but not fatal')
+  })
+
+  // An uncaught exception leaves the process in an genuinely unknown state, so
+  // this one logs and re-throws the default behaviour by exiting: the platform
+  // restarts us, which is safer than continuing on corrupt state.
+  process.on('uncaughtException', (err) => {
+    app.log.fatal({ err }, 'Uncaught exception — exiting for restart')
+    process.exit(1)
+  })
+
   // Graceful shutdown
   const signals = ['SIGINT', 'SIGTERM'] as const
   for (const signal of signals) {

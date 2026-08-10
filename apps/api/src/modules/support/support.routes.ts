@@ -3,6 +3,7 @@ import { supportService } from './support.service.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
+import { RATE } from '../../lib/rate-limit.plugin.js'
 import { SupportCategory, TicketPriority, TicketStatus } from '@prisma/client'
 
 const GLOBAL_SUPPORT_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
@@ -12,6 +13,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /support/tickets — Create a new ticket (Managers)
   app.post('/tickets', {
+    config:     RATE.AI_CHAT,
     preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
@@ -102,6 +104,10 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /support/tickets/:id/messages — Reply to a ticket
   app.post('/tickets/:id/messages', {
+    // Each reply runs the AI agent: a paid embedding call, a paid streaming
+    // generation, and a fan-out of database lookups. Left unlimited, one
+    // client could drain the Gemini quota and hammer the database.
+    config:     RATE.AI_CHAT,
     preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
@@ -174,6 +180,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /support/ai-portal/chat — Direct chat with BraynAI (No ticket)
   app.post('/ai-portal/chat', {
+    config:     RATE.AI_CHAT,
     preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { message } = z.object({ message: z.string().min(1).max(5000) }).parse(request.body)

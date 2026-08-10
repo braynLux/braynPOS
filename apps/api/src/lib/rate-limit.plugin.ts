@@ -84,6 +84,20 @@ export const RATE = {
       keyGenerator: (request: any) => `stock-${request.user?.id ?? request.ip}`,
     },
   },
+  // AI support chat. Every request spends a Gemini embedding call plus a
+  // streaming generation against a paid quota, and fans out into per-word
+  // item lookups and a seven-day sales aggregate, so this is far more
+  // expensive than an ordinary read and is limited well below READ.
+  // Keyed per user: one person looping the endpoint must not exhaust the
+  // shared quota for everyone else on the same NAT or proxy.
+  AI_CHAT: {
+    rateLimit: {
+      max:        10,
+      timeWindow: '1 minute',
+      keyGenerator: (request: any) => `ai-chat-${request.user?.id ?? request.ip}`,
+    },
+  },
+
   // Anti-Scraping for Digital Catalog
   PUBLIC_CATALOG: {
     rateLimit: {
