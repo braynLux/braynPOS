@@ -17,24 +17,16 @@ if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
   throw new Error('FATAL: JWT_SECRET is required in production.')
 }
 
-// ── Emergency Recovery Note ──────────────────────────────────────────
-// Symmetric signing (HS256) is temporarily allowed to restore access.
-// Re-enable this block once RSA keys are configured in production.
-/*
-if (process.env.NODE_ENV === 'production' && !isRSA) {
-  throw new Error('FATAL: JWT is running in HS256 mode in production.')
-}
-*/
-
 // ── Token payload shape ───────────────────────────────────────────────
 export interface TokenPayload {
-  id:           string
-  sub:          string
-  username:     string
-  email:        string
-  role:         UserRole
-  channelId:    string | null
-  mfaVerified?: boolean
+  id:            string
+  sub:           string
+  username:      string
+  email:         string
+  role:          UserRole
+  channelId:     string | null
+  enterpriseId?: string | null
+  mfaVerified?:  boolean
 }
 
 // ── Sign access token ─────────────────────────────────────────────────

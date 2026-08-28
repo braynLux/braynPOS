@@ -46,12 +46,22 @@ function toNum(val: number | { toNumber(): number } | undefined | null, fallback
 // FIX 2: Tax line support added. When taxAmount > 0, Sales Revenue is
 // credited only the pre-tax net, and Tax Payable receives the tax portion.
 // This keeps the journal balanced: Cash DR = Revenue CR + Tax Payable CR.
+const PAYMENT_DEBIT_ACCOUNTS: Record<string, string> = {
+  CASH:           ACCOUNT_IDS.CASH_ON_HAND,
+  MOBILE_MONEY:   ACCOUNT_IDS.BANK_ACCOUNT,
+  CARD:           ACCOUNT_IDS.BANK_ACCOUNT,
+  BANK_TRANSFER:  ACCOUNT_IDS.BANK_ACCOUNT,
+  CREDIT:         ACCOUNT_IDS.ACCOUNTS_RECEIVABLE,
+  LOYALTY_POINTS: ACCOUNT_IDS.CASH_ON_HAND,
+}
+
 export async function buildSaleJournalEntry(
   tx:        TransactionClient,
   sale:      SaleForJournal,
   totalCost: number,
   postedBy:  string,
-  isCredit = false
+  isCredit = false,
+  payments?: { method: string; amount: number | { toNumber(): number } }[]
 ) {
   const netAmount = toNum(sale.netAmount)
   const taxAmount = toNum(sale.taxAmount)
@@ -68,23 +78,52 @@ export async function buildSaleJournalEntry(
     },
   })
 
-  const debitAccountId = isCredit
-    ? ACCOUNT_IDS.ACCOUNTS_RECEIVABLE
-    : ACCOUNT_IDS.CASH_ON_HAND
+  const lines: any[] = []
 
-  const lines: any[] = [
-    // FIX 1: netAmount replaces totalAmount — actual cash/AR created
-    { journalEntryId: je.id, accountId: debitAccountId,              debitAmount: netAmount,     creditAmount: 0 },
-    { journalEntryId: je.id, accountId: ACCOUNT_IDS.SALES_REVENUE,   debitAmount: 0,             creditAmount: revenueAmount },
-  ]
-
-  // FIX 2: Tax line — only written when tax is actually applied
-  if (taxAmount > 0) {
-    lines.push(
-      { journalEntryId: je.id, accountId: ACCOUNT_IDS.TAX_PAYABLE, debitAmount: 0, creditAmount: taxAmount }
-    )
+  // 1. Debit lines: split across payment accounts or single default
+  if (payments && payments.length > 0) {
+    for (const pmt of payments) {
+      const pmtAmt = toNum(pmt.amount)
+      if (pmtAmt <= 0) continue
+      const debitAccountId = PAYMENT_DEBIT_ACCOUNTS[pmt.method] || ACCOUNT_IDS.CASH_ON_HAND
+      lines.push({
+        journalEntryId: je.id,
+        accountId:      debitAccountId,
+        debitAmount:    pmtAmt,
+        creditAmount:   0,
+      })
+    }
+  } else {
+    const debitAccountId = isCredit
+      ? ACCOUNT_IDS.ACCOUNTS_RECEIVABLE
+      : ACCOUNT_IDS.CASH_ON_HAND
+    lines.push({
+      journalEntryId: je.id,
+      accountId:      debitAccountId,
+      debitAmount:    netAmount,
+      creditAmount:   0,
+    })
   }
 
+  // 2. Credit line: Sales Revenue
+  lines.push({
+    journalEntryId: je.id,
+    accountId:      ACCOUNT_IDS.SALES_REVENUE,
+    debitAmount:    0,
+    creditAmount:   revenueAmount,
+  })
+
+  // 3. Tax line: only written when tax is actually applied
+  if (taxAmount > 0) {
+    lines.push({
+      journalEntryId: je.id,
+      accountId:      ACCOUNT_IDS.TAX_PAYABLE,
+      debitAmount:    0,
+      creditAmount:   taxAmount,
+    })
+  }
+
+  // 4. Cost of Goods Sold & Inventory Asset
   if (totalCost > 0) {
     lines.push(
       { journalEntryId: je.id, accountId: ACCOUNT_IDS.COGS,            debitAmount: totalCost, creditAmount: 0 },

@@ -8,7 +8,8 @@ import { startNotificationWorker }  from './workers/notification.worker.js'
 import { seedAccounts } from './lib/seed-accounts.js'
 import { cleanupDuplicateItems } from './lib/cleanup-duplicates.js'
 import { basePrisma } from './lib/prisma.js'
-import { redis } from './lib/redis.js'
+import { startStockRefreshWorker } from './workers/stock-refresh.worker.js'
+import { purgeExpiredSecurityRecords } from './lib/pg-store.js'
 
 const PORT = parseInt(process.env.PORT || process.env.API_PORT || '4000', 10)
 const HOST = process.env.API_HOST || '0.0.0.0'
@@ -104,6 +105,13 @@ async function start() {
   const { startLoyaltyListener } = await import('./modules/loyalty/loyalty.listener.js')
   startLoyaltyListener()
   startNotificationWorker()
+  startStockRefreshWorker()
+
+  // Schedule hourly cleanup for expired tokens & attempts
+  const cleanupTimer = setInterval(() => {
+    purgeExpiredSecurityRecords().catch(err => console.error('[Cleanup Error]:', err))
+  }, 3600_000)
+  cleanupTimer.unref()
 
   // FIX: listen() comes LAST — after all handlers are ready
   try {
@@ -121,9 +129,9 @@ async function start() {
   for (const signal of signals) {
     process.on(signal, async () => {
       app.log.info(`Received ${signal} — shutting down gracefully...`)
+      clearInterval(cleanupTimer)
       await app.close()
       await basePrisma.$disconnect()
-      await redis.quit()
       process.exit(0)
     })
   }

@@ -14,6 +14,128 @@ import { idempotencyCheckMiddleware } from './middleware/idempotency-check.js'
 import { commissionRoutes } from './modules/commission/commission.routes.js'
 import multipart from '@fastify/multipart'
 import { ZodError } from 'zod'
+import { Prisma } from '@prisma/client'
+
+export function globalErrorHandler(error: any, request: any, reply: any) {
+  // 1. Validation Errors (Zod)
+  if (error instanceof ZodError) {
+    return reply.status(400).send({
+      statusCode: 400,
+      error:      'Validation Error',
+      message:    error.errors.map(e => e.message).join(', ')
+    })
+  }
+
+  // 2. Database Connection / Initialization Failure (Prisma)
+  if (error instanceof Prisma.PrismaClientInitializationError) {
+    request.log.error({ err: error, url: request.url }, 'database connection failure')
+    return reply.status(503).send({
+      statusCode: 503,
+      error:      'Database Unavailable',
+      message:    'Unable to connect to the database server. Please ensure the database service is running.'
+    })
+  }
+
+  // 3. Known Request Errors (Prisma constraints, not found, etc.)
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    request.log.error({ code: error.code, meta: error.meta, url: request.url }, 'prisma known request error')
+    switch (error.code) {
+      case 'P2002': {
+        const target = (error.meta?.target as string[])?.join(', ') || 'field'
+        return reply.status(409).send({
+          statusCode: 409,
+          error:      'Conflict',
+          message:    `A record with this ${target} already exists.`
+        })
+      }
+      case 'P2025':
+        return reply.status(404).send({
+          statusCode: 404,
+          error:      'Not Found',
+          message:    'The requested record was not found.'
+        })
+      case 'P2003':
+        return reply.status(400).send({
+          statusCode: 400,
+          error:      'Constraint Violation',
+          message:    'This operation cannot be completed because related records exist.'
+        })
+      case 'P2024':
+      case 'P1001':
+      case 'P1002':
+        return reply.status(503).send({
+          statusCode: 503,
+          error:      'Database Unavailable',
+          message:    'The database server is currently unreachable or timed out. Please verify your database connection.'
+        })
+      default:
+        return reply.status(500).send({
+          statusCode: 500,
+          error:      'Database Error',
+          message:    'A database error occurred while processing your request. Please try again.'
+        })
+    }
+  }
+
+  // 4. Unknown Prisma Errors / Validation / Panics
+  if (
+    error instanceof Prisma.PrismaClientValidationError ||
+    error instanceof Prisma.PrismaClientUnknownRequestError ||
+    error instanceof Prisma.PrismaClientRustPanicError
+  ) {
+    request.log.error({ err: error, url: request.url }, 'prisma query or validation error')
+    return reply.status(500).send({
+      statusCode: 500,
+      error:      'Database Error',
+      message:    'An unexpected database error occurred. Please try again.'
+    })
+  }
+
+  const statusCode    = (error as { statusCode?: number }).statusCode ?? (error as { status?: number }).status ?? 500
+  const isServerError = statusCode >= 500
+  const rawMessage    = typeof error.message === 'string' ? error.message : 'Internal Server Error'
+
+  if (isServerError) {
+    request.log.error({ err: error, url: request.url, method: request.method }, 'server error')
+    if (process.env.SENTRY_DSN) {
+      Sentry.captureException(error, {
+        user: { id: (request.user as any)?.sub, email: (request.user as any)?.email },
+        extra: { url: request.url, method: request.method, requestId: request.id },
+      })
+    }
+  } else {
+    request.log.warn({ statusCode, message: rawMessage, url: request.url }, 'client error handled')
+  }
+
+  const lowerMessage = rawMessage.toLowerCase()
+  const isTechnicalDbError =
+    lowerMessage.includes('prisma') ||
+    lowerMessage.includes('database') ||
+    lowerMessage.includes('econnrefused') ||
+    lowerMessage.includes('enotfound') ||
+    lowerMessage.includes('syntax error') ||
+    lowerMessage.includes('invocation in') ||
+    lowerMessage.includes('column') ||
+    lowerMessage.includes('relation') ||
+    lowerMessage.includes('15432') ||
+    lowerMessage.includes('127.0.0.1:') ||
+    lowerMessage.includes('localhost:')
+
+  let safeMessage = rawMessage
+  if (isTechnicalDbError) {
+    safeMessage = (lowerMessage.includes('reach') || lowerMessage.includes('connect') || lowerMessage.includes('econnrefused'))
+      ? 'Unable to connect to the database server. Please ensure the database service is running.'
+      : 'A database error occurred. Please try again or contact support.'
+  } else if (isServerError) {
+    safeMessage = 'An unexpected server error occurred. Please try again or contact support.'
+  }
+
+  return reply.status(statusCode).send({
+    error:      safeMessage,
+    message:    safeMessage,
+    statusCode,
+  })
+}
 
 export async function buildApp() {
   if (process.env.SENTRY_DSN) {
@@ -43,6 +165,10 @@ export async function buildApp() {
     trustProxy:        true,
     connectionTimeout: 30_000,
   })
+
+  // ── Global Error Handler (Registered Early) ──────────────────────
+  app.setErrorHandler(globalErrorHandler)
+
 
   // ── Health + Readiness — FIRST, before all other plugins ────────
   await app.register(healthPlugin)
@@ -121,9 +247,14 @@ export async function buildApp() {
 
   // ── API v1 routes ───────────────────────────────────────────────
   await app.register(async (v1) => {
+    v1.setErrorHandler(globalErrorHandler)
+
     await v1.register(authRoutes, { prefix: '/auth' })
     const { managerApproveRoutes } = await import('./modules/auth/manager-approve.routes.js')
     await v1.register(managerApproveRoutes, { prefix: '/auth' })
+
+    const { enterpriseRoutes } = await import('./modules/enterprises/enterprises.routes.js')
+    await v1.register(enterpriseRoutes, { prefix: '/enterprises' })
 
     const { googleRoutes } = await import('./modules/settings/google.routes.js')
     await v1.register(googleRoutes, { prefix: '/settings/google' })
@@ -233,37 +364,6 @@ export async function buildApp() {
 
   }, { prefix: '/v1' })
 
-  // ── Global error handler ────────────────────────────────────────
-  app.setErrorHandler((error, request, reply) => {
-    if (error instanceof ZodError) {
-      return reply.status(400).send({
-        statusCode: 400,
-        error:      'Validation Error',
-        message:    error.errors.map(e => e.message).join(', ')
-      })
-    }
-
-    const statusCode = (error as { statusCode?: number }).statusCode ?? 500
-    const message    = error.message ?? 'Internal Server Error'
-
-    if (statusCode >= 500) {
-      app.log.error({ err: error, url: request.url, method: request.method }, 'server error')
-      if (process.env.SENTRY_DSN) {
-        Sentry.captureException(error, {
-          user: { id: (request.user as any)?.sub, email: (request.user as any)?.email },
-          extra: { url: request.url, method: request.method, requestId: request.id },
-        })
-      }
-    } else {
-      app.log.warn({ statusCode, message, url: request.url }, 'client error handled')
-    }
-
-    return reply.status(statusCode).send({
-      error:   message,
-      statusCode,
-      ...(process.env.NODE_ENV === 'development' && { stack: error.stack }),
-    })
-  })
-
   return app
 }
+

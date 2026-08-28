@@ -13,7 +13,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
   // Restricted to high-level roles only.
   app.get('/', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       page:       z.coerce.number().min(1).optional().default(1),
@@ -35,7 +35,11 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       effectiveChannelId = request.user.channelId || 'NONE' 
     }
 
-    const where = {
+    const isPlatformOwner = request.user.role === 'PLATFORM_OWNER'
+    const enterpriseId    = request.user.enterpriseId
+
+    const where: any = {
+      ...(enterpriseId && !isPlatformOwner && { enterpriseId }),
       ...(effectiveChannelId && { channelId: effectiveChannelId }),
       ...(query.actorId      && { actorId:   query.actorId }),
       ...(query.action       && { action:    query.action }),

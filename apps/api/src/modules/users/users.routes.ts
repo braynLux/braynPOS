@@ -100,16 +100,17 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // Security check: Enforce maximum administrative role counts (only count non-deleted users)
+    // Security check: Enforce maximum administrative role counts per enterprise (only count non-deleted users)
+    const enterpriseId = request.user.enterpriseId
     if (body.role === 'SUPER_ADMIN') {
-      const count = await prisma.user.count({ where: { role: 'SUPER_ADMIN', deletedAt: null } })
-      if (count >= 1) return reply.status(403).send({ error: 'Maximum of 1 Super Admin allowed' })
+      const count = await prisma.user.count({ where: { role: 'SUPER_ADMIN', enterpriseId, deletedAt: null } })
+      if (count >= 1) return reply.status(403).send({ error: 'Maximum of 1 Super Admin allowed per enterprise' })
     } else if (body.role === 'ADMIN') {
-      const count = await prisma.user.count({ where: { role: 'ADMIN', deletedAt: null } })
-      if (count >= 2) return reply.status(403).send({ error: 'Maximum of 2 Admins allowed' })
+      const count = await prisma.user.count({ where: { role: 'ADMIN', enterpriseId, deletedAt: null } })
+      if (count >= 2) return reply.status(403).send({ error: 'Maximum of 2 Admins allowed per enterprise' })
     } else if (body.role === 'MANAGER_ADMIN') {
-      const count = await prisma.user.count({ where: { role: 'MANAGER_ADMIN', deletedAt: null } })
-      if (count >= 2) return reply.status(403).send({ error: 'Maximum of 2 Manager Admins allowed' })
+      const count = await prisma.user.count({ where: { role: 'MANAGER_ADMIN', enterpriseId, deletedAt: null } })
+      if (count >= 2) return reply.status(403).send({ error: 'Maximum of 2 Manager Admins allowed per enterprise' })
     }
 
     // Security check: Managers and Manager Admins need Administrator Manager approval (for lower roles)
@@ -169,15 +170,16 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
     // Security check: Enforce maximum administrative role counts on promotion
     if (body.role && body.role !== targetUser.role) {
+      const enterpriseId = request.user.enterpriseId
       if (body.role === 'SUPER_ADMIN') {
-        const count = await prisma.user.count({ where: { role: 'SUPER_ADMIN', deletedAt: null } })
-        if (count >= 1) return reply.status(403).send({ error: 'Maximum of 1 Super Admin allowed' })
+        const count = await prisma.user.count({ where: { role: 'SUPER_ADMIN', enterpriseId, deletedAt: null } })
+        if (count >= 1) return reply.status(403).send({ error: 'Maximum of 1 Super Admin allowed per enterprise' })
       } else if (body.role === 'ADMIN') {
-        const count = await prisma.user.count({ where: { role: 'ADMIN', deletedAt: null } })
-        if (count >= 2) return reply.status(403).send({ error: 'Maximum of 2 Admins allowed' })
+        const count = await prisma.user.count({ where: { role: 'ADMIN', enterpriseId, deletedAt: null } })
+        if (count >= 2) return reply.status(403).send({ error: 'Maximum of 2 Admins allowed per enterprise' })
       } else if (body.role === 'MANAGER_ADMIN') {
-        const count = await prisma.user.count({ where: { role: 'MANAGER_ADMIN', deletedAt: null } })
-        if (count >= 2) return reply.status(403).send({ error: 'Maximum of 2 Manager Admins allowed' })
+        const count = await prisma.user.count({ where: { role: 'MANAGER_ADMIN', enterpriseId, deletedAt: null } })
+        if (count >= 2) return reply.status(403).send({ error: 'Maximum of 2 Manager Admins allowed per enterprise' })
       }
     }
 

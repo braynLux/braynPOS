@@ -1,7 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
 import { verifyToken, type TokenPayload } from '../lib/jwt.js'
 import { requestContext } from '../lib/request-context.plugin.js'
-import { redis } from '../lib/redis.js'
+import { isTokenRevoked, revokeToken } from '../lib/pg-store.js'
 
 // ── Augment FastifyRequest so request.user is typed everywhere ───────
 declare module 'fastify' {
@@ -40,17 +40,14 @@ export async function authenticate(
   try {
     const payload = verifyToken(token)
 
-    // ── FIX 1: Check token revocation in Redis ────────────────────────
+    // ── Check token revocation in Postgres ───────────────────────────
     // Access tokens are stateless JWTs — once issued they remain
     // cryptographically valid until expiry regardless of logout.
-    // We maintain a Redis blocklist so that logout, password change,
-    // and MFA disable immediately invalidate outstanding access tokens
-    // rather than leaving a 15-minute window of unauthorized access.
-    //
-    // Key format: revoked:<token>
-    // TTL mirrors the token's remaining lifetime so Redis self-cleans.
-    const isRevoked = await redis.get(`revoked:${token}`)
-    if (isRevoked) {
+    // We maintain a Postgres blocklist (revoked_tokens) so that logout,
+    // password change, and MFA disable immediately invalidate outstanding
+    // access tokens rather than leaving a window of unauthorized access.
+    const revoked = await isTokenRevoked(token)
+    if (revoked) {
       reply.status(401).send({ error: 'Token has been revoked' })
       return
     }
@@ -73,24 +70,26 @@ export async function authenticate(
     // ── Populate the request context after auth ──────────────────────
     const store = requestContext.getStore()
     if (store) {
-      store.userId    = payload.sub
-      store.role      = payload.role
-      store.channelId = payload.channelId ?? undefined
+      store.userId       = payload.sub
+      store.role         = payload.role
+      store.channelId    = payload.channelId ?? undefined
+      store.enterpriseId = payload.enterpriseId ?? undefined
     }
   } catch {
     reply.status(401).send({ error: 'Invalid or expired token' })
   }
 }
 
-// ── Revoke an access token in Redis ──────────────────────────────────
+// ── Revoke an access token in Postgres ───────────────────────────────
 // Call this from logout, password change, MFA disable, and role change.
-// TTL is set to the token's remaining lifetime so Redis self-cleans.
+// The row is stored in revoked_tokens with the token's actual expiry so
+// a nightly cleanup job can purge stale rows automatically.
 export async function revokeAccessToken(token: string): Promise<void> {
   try {
     const payload = verifyToken(token)
     const exp     = (payload as any).exp as number | undefined
-    const ttl     = exp ? Math.max(exp - Math.floor(Date.now() / 1000), 1) : 900 // 15m fallback
-    await redis.setex(`revoked:${token}`, ttl, '1')
+    const expiresAt = exp ? new Date(exp * 1000) : new Date(Date.now() + 900_000)
+    await revokeToken(token, expiresAt)
   } catch {
     // Token already expired — no need to revoke
   }

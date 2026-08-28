@@ -4,8 +4,15 @@ import { buildStockAdjustmentShrinkageJournalEntry } from '../../lib/ledger.js'
 export class StockTakeService {
   async start(channelId: string, startedBy: string) {
     const balances = await prisma.inventoryBalance.findMany({
-      where: { channelId }
+      where: { 
+        channelId,
+        item: { deletedAt: null } 
+      }
     })
+
+    if (balances.length === 0) {
+      throw { statusCode: 400, message: 'Cannot start a stock take: No active items found in the system for this branch.' }
+    }
 
     return prisma.$transaction(async (tx) => {
       const stockTake = await tx.stockTake.create({

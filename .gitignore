@@ -12,4 +12,6 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+*.tsbuildinfo
 # NOTE: prisma/migrations/ is intentionally tracked in git for reproducible deployments
+

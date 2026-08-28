@@ -247,23 +247,36 @@ export class ReportsService {
     `
   }
 
-  async adminDashboardAnalytics(startDate: string, endDate: string) {
+  async adminDashboardAnalytics(startDate: string, endDate: string, enterpriseId?: string | null) {
     const start = parseDate(startDate)
     const end   = parseDate(endDate, true)
 
+    const channels = await prisma.channel.findMany({
+      where:  {
+        deletedAt: null,
+        ...(enterpriseId ? { enterpriseId } : {}),
+      },
+      select: { id: true, name: true, code: true },
+    })
+
+    const channelIds = channels.map(c => c.id)
+    if (channelIds.length === 0) {
+      return {
+        period:          { startDate, endDate },
+        aggregateRevenue: 0,
+        aggregateMargin:  0,
+        totalSalesCount:  0,
+        channelStats:     [],
+      }
+    }
+
     const totalSales = await prisma.sale.aggregate({
-      where:  { createdAt: { gte: start, lte: end }, deletedAt: null },
+      where:  { channelId: { in: channelIds }, createdAt: { gte: start, lte: end }, deletedAt: null },
       _sum:   { netAmount: true },
       _count: true,
     })
 
-    const channels = await prisma.channel.findMany({
-      where:  { deletedAt: null },
-      select: { id: true, name: true, code: true },
-    })
-
-    // FIX 2: Single COGS aggregation across all channels grouped by channelId
-    // instead of one saleItem.findMany() per channel (was N queries, now 1)
+    // FIX 2: Single COGS aggregation scoped to channels in this enterprise
     const cogsPerChannel = await prisma.$queryRaw<
       Array<{ channelId: string; cogs: number }>
     >`
@@ -271,7 +284,8 @@ export class ReportsService {
              COALESCE(SUM(si."costPriceSnapshot" * si.quantity), 0) AS cogs
       FROM   sale_items si
       JOIN   sales s ON s.id = si."saleId"
-      WHERE  s."createdAt" >= ${start}
+      WHERE  s."channelId" = ANY(${channelIds})
+        AND  s."createdAt" >= ${start}
         AND  s."createdAt" <= ${end}
         AND  s."deletedAt"  IS NULL
       GROUP BY s."channelId"
@@ -280,7 +294,7 @@ export class ReportsService {
 
     const salesPerChannel = await prisma.sale.groupBy({
       by:    ['channelId'],
-      where: { createdAt: { gte: start, lte: end }, deletedAt: null },
+      where: { channelId: { in: channelIds }, createdAt: { gte: start, lte: end }, deletedAt: null },
       _sum:  { netAmount: true },
       _count: true,
     })
@@ -305,7 +319,7 @@ export class ReportsService {
       period:          { startDate, endDate },
       aggregateRevenue: channelStats.reduce((sum, c) => sum + c.revenue, 0),
       aggregateMargin:  channelStats.reduce((sum, c) => sum + c.margin,  0),
-      totalSalesCount:  totalSales._count,
+      totalSalesCount:  totalSales._count ?? 0,
       channelStats,
     }
   }

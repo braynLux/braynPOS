@@ -21,7 +21,15 @@ interface CsvItemRow {
 }
 
 export class CsvImportService {
-  async importItems(csvBuffer: Buffer) {
+  // FIX: imported items were created via a bare prisma.item.create() with no
+  // InventoryBalance row at all — unlike itemsService.create() (the normal
+  // single-item path), which always anchors a new item into a channel with
+  // its pricing. Without that anchor, a CSV-imported item has 0 availableQty
+  // everywhere and is invisible to non-HQ (channel-scoped) staff entirely,
+  // since item listings filter by inventoryBalances presence per channel —
+  // bulk import silently produced catalog entries no one at store level
+  // could ever see or sell.
+  async importItems(csvBuffer: Buffer, channelId: string) {
     const records: CsvItemRow[] = []
     const errors: { row: number; error: string }[] = []
     let created = 0
@@ -97,18 +105,34 @@ export class CsvImportService {
           throw new Error('Import Refused: A valid Cost Price is mandatory for every item to ensure margin integrity.')
         }
 
-        if (existing) {
-          await prisma.item.update({
-            where: { id: existing.id },
-            data: itemData,
-          })
-          updated++
-        } else {
-          await prisma.item.create({
-            data: { sku: row.sku, ...itemData },
-          })
-          created++
-        }
+        const item = existing
+          ? await prisma.item.update({ where: { id: existing.id }, data: itemData })
+          : await prisma.item.create({ data: { sku: row.sku, ...itemData } })
+
+        // Anchor pricing into the target channel — see FIX note above.
+        // availableQty is deliberately left untouched on update (stock
+        // levels come from purchases/adjustments, not a catalog re-sync)
+        // and defaults to 0 on create (this endpoint sets up the catalog
+        // entry, not opening stock).
+        await (prisma as any).inventoryBalance.upsert({
+          where:  { itemId_channelId: { itemId: item.id, channelId } },
+          create: {
+            itemId: item.id, channelId,
+            retailPrice:     itemData.retailPrice,
+            wholesalePrice:  itemData.wholesalePrice,
+            minRetailPrice:  itemData.minRetailPrice,
+            weightedAvgCost: itemData.weightedAvgCost,
+          },
+          update: {
+            retailPrice:     itemData.retailPrice,
+            wholesalePrice:  itemData.wholesalePrice,
+            minRetailPrice:  itemData.minRetailPrice,
+            weightedAvgCost: itemData.weightedAvgCost,
+          },
+        })
+
+        if (existing) updated++
+        else created++
       } catch (err) {
         errors.push({
           row: i + 2, // 1-indexed + header row

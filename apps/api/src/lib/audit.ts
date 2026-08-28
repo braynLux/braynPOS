@@ -1,4 +1,4 @@
-// apps/api/src/lib/audit.ts
+﻿// apps/api/src/lib/audit.ts
 // NEVER await this in the main transaction path.
 // Call it AFTER commit as a background fire-and-forget.
 
@@ -6,16 +6,17 @@ import { prisma } from './prisma.js'
 import { logger }  from './logger.js'
 
 interface AuditPayload {
-  action:      string
-  actorId:     string
-  actorRole:   string
-  approverId?: string
-  channelId?:  string
-  targetType?: string
-  targetId?:   string
-  oldValues?:  any
-  newValues?:  any
-  ipAddress?:  string
+  action:        string
+  actorId:       string
+  actorRole:     string
+  enterpriseId?: string
+  approverId?:   string
+  channelId?:    string
+  targetType?:   string
+  targetId?:     string
+  oldValues?:    any
+  newValues?:    any
+  ipAddress?:    string
 }
 
 export function logAction(payload: AuditPayload): void {
@@ -28,11 +29,6 @@ export function logAction(payload: AuditPayload): void {
 }
 
 // ── AUDIT ACTION CONSTANTS ────────────────────────────────────────────
-// FIX: Added missing constants that were referenced as raw strings
-// across the codebase — PURCHASE_DELETE in purchase.routes.ts,
-// PAYROLL_RUN_REVERSE in payslip.service.ts, MFA_DISABLED in
-// auth.service.ts. Raw strings defeat the purpose of this object
-// and make audit log queries inconsistent.
 export const AUDIT = {
   // Sales
   SALE_VOID:             'sale.void',
@@ -61,18 +57,18 @@ export const AUDIT = {
   USER_UPDATE:           'user.update',
 
   // Auth & MFA
-  MFA_DISABLED:          'auth.mfa_disabled',       // ← FIX: was missing
+  MFA_DISABLED:          'auth.mfa_disabled',
   MFA_ENABLED:           'auth.mfa_enabled',
   PASSWORD_CHANGED:      'auth.password_changed',
 
   // Payroll
   PAYROLL_ACCESS:        'payroll.access',
   PAYROLL_RUN_FINALIZE:  'payroll.run_finalize',
-  PAYROLL_RUN_REVERSE:   'payroll.run_reverse',      // ← FIX: was missing
+  PAYROLL_RUN_REVERSE:   'payroll.run_reverse',
   PAYROLL_RUN_DELETE:    'payroll.run_delete',
 
   // Purchases
-  PURCHASE_DELETE:       'purchase.delete',          // ← FIX: was missing
+  PURCHASE_DELETE:       'purchase.delete',
   PURCHASE_COMMIT:       'purchase.commit',
 
   // Customers & Credit

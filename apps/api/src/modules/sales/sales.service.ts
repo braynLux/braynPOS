@@ -258,7 +258,7 @@ async function commitSaleOnce(
         discountAmount:   new Prisma.Decimal(totalDiscount.toFixed(4)),
         taxAmount:        new Prisma.Decimal(taxAmount.toFixed(4)),
         netAmount:        new Prisma.Decimal(netAmount.toFixed(4)),
-        performedBy:      actor.sub,
+        performedBy:      input.promoterId || actor.sub,
         offlineReceiptNo: options?.offlineReceiptNo ?? null,
         notes:            input.notes ?? null,
         deviceDate:       options?.deviceDate ? new Date(options.deviceDate) : null,
@@ -375,7 +375,7 @@ async function commitSaleOnce(
     }
 
     const isCredit = newSale.saleType === 'CREDIT'
-    await buildSaleJournalEntry(tx as any, newSale as any, totalCost, actor.sub, isCredit)
+    await buildSaleJournalEntry(tx as any, newSale as any, totalCost, actor.sub, isCredit, input.payments)
     return { sale: newSale, totalCost }
   })
 }
@@ -395,6 +395,7 @@ export interface CommitSaleInput {
   payments:        { method: string; amount: number; reference?: string }[]
   notes?:          string
   discountAmount?: number
+  promoterId?:     string | null
   dueDate?:        string | Date | null
 }
 

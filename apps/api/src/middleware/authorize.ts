@@ -35,6 +35,7 @@ export function authorize(...allowedRoles: UserRole[]) {
 //   STOREKEEPER     30  — inventory operations
 //   PROMOTER        20  — limited sales/view access
 export const roleHierarchy: Record<string, number> = {
+  PLATFORM_OWNER: 110,
   SUPER_ADMIN:   100,
   ADMIN:          90,
   MANAGER_ADMIN:  80,

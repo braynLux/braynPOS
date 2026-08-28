@@ -10,6 +10,20 @@ export interface NavGroup {
 }
 
 export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
+  PLATFORM_OWNER: [
+    { group: '🎯 Command Center', items: [
+      { href: '/dashboard',             label: '📊 Fleet Dashboard',    icon: '📊' },
+      { href: '/dashboard/enterprises', label: '🏢 Enterprise Fleet',   icon: '🏢' },
+    ]},
+    { group: '🔧 Fleet Operations', items: [
+      { href: '/dashboard/fleet/analytics', label: '📈 Fleet Analytics',    icon: '📈' },
+      { href: '/dashboard/fleet/audit',     label: '📜 Fleet Audit Trail',  icon: '📜' },
+    ]},
+    { group: '🛡️ Platform Security', items: [
+      { href: '/dashboard/fleet/security',  label: '🔒 Security Overview',  icon: '🔒' },
+      { href: '/dashboard/settings',        label: '⚙️ Platform Settings',  icon: '⚙️' },
+    ]},
+  ],
   SUPER_ADMIN: [
     { group: 'Overview', items: [
       { href: '/dashboard',            label: '📊 Dashboard',        icon: '📊' },
@@ -199,6 +213,7 @@ export const NAV_ITEMS_BY_ROLE: Record<string, NavGroup[]> = {
 }
 
 export const ROLE_LANDING_PAGES: Record<string, string> = {
+  PLATFORM_OWNER: '/dashboard',
   SUPER_ADMIN:   '/dashboard',
   MANAGER_ADMIN: '/dashboard',
   ADMIN:         '/dashboard',
