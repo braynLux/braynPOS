@@ -26,6 +26,8 @@ interface ItemResult {
   minRetailPrice: number
   minWholesalePrice: number
   weightedAvgCost: number
+  inStock?: number
+  reorderLevel?: number
   category?: { name: string }
   isSerialized: boolean
 }
@@ -171,9 +173,12 @@ export default function POSPage() {
     addItem({
       itemId: item.id, name: item.name, sku: item.sku,
       quantity: 1, unitPrice: Number(price),
+      originalPrice: Number(price),
       minRetailPrice: Number(item.minRetailPrice),
       minWholesalePrice: Number(item.minWholesalePrice),
       costPrice: Number(item.weightedAvgCost),
+      inStock: item.inStock ?? 0,
+      reorderLevel: item.reorderLevel ?? 0,
     })
     // On mobile, flash cart badge to confirm add
     if (window.innerWidth < 768) {
@@ -192,9 +197,12 @@ export default function POSPage() {
       itemId: serialPickerItem.id, name: serialPickerItem.name, sku: serialPickerItem.sku,
       serialId: serial.id, serialNo: serial.serialNo,
       quantity: 1, unitPrice: Number(price),
+      originalPrice: Number(price),
       minRetailPrice: Number(serialPickerItem.minRetailPrice),
       minWholesalePrice: Number(serialPickerItem.minWholesalePrice),
       costPrice: Number(serialPickerItem.weightedAvgCost),
+      inStock: serialPickerItem.inStock ?? 0,
+      reorderLevel: serialPickerItem.reorderLevel ?? 0,
     })
     setSerialPickerItem(null)
   }
