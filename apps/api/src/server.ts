@@ -1,3 +1,4 @@
+// v2.0.1 — multi-tenant fleet console, enterprise onboarding, superadmin provisioning
 import 'dotenv/config'
 import { buildApp } from './app.js'
 import { Server } from 'socket.io'
