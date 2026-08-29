@@ -64,19 +64,119 @@ async function syncAdmin() {
   }
 }
 
+async function ensureDatabaseSchema() {
+  try {
+    console.log('🔄 [BOOT] Ensuring multi-tenant & security database schema...')
+    
+    // 1. Enum
+    await basePrisma.$executeRawUnsafe(`ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'PLATFORM_OWNER';`).catch(() => {})
+
+    // 2. Enterprise table
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "enterprises" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "slug" TEXT NOT NULL UNIQUE,
+        "email" TEXT NOT NULL,
+        "phone" TEXT,
+        "logoUrl" TEXT,
+        "plan" TEXT NOT NULL DEFAULT 'STARTER',
+        "planFeatures" JSONB,
+        "isActive" BOOLEAN NOT NULL DEFAULT true,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "deletedAt" TIMESTAMP(3)
+      );
+    `).catch(() => {})
+
+    // 3. Columns
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "channels" ADD COLUMN IF NOT EXISTS "enterpriseId" TEXT;`).catch(() => {})
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "enterpriseId" TEXT;`).catch(() => {})
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "items" ADD COLUMN IF NOT EXISTS "enterpriseId" TEXT;`).catch(() => {})
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "audit_logs" ADD COLUMN IF NOT EXISTS "enterpriseId" TEXT;`).catch(() => {})
+
+    // 4. Security tables
+    await basePrisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'revoked_tokens' AND column_name = 'id') THEN
+          DROP TABLE IF EXISTS "revoked_tokens" CASCADE;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'manager_approval_tokens' AND column_name = 'token') THEN
+          DROP TABLE IF EXISTS "manager_approval_tokens" CASCADE;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'login_attempts' AND column_name = 'key') THEN
+          DROP TABLE IF EXISTS "login_attempts" CASCADE;
+        END IF;
+      END $$;
+    `).catch(() => {})
+
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "revoked_tokens" (
+        "token" TEXT NOT NULL PRIMARY KEY,
+        "expiresAt" TIMESTAMP(3) NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `).catch(() => {})
+
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "manager_approval_tokens" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "action" TEXT NOT NULL,
+        "contextId" TEXT NOT NULL,
+        "channelId" TEXT,
+        "approverId" TEXT NOT NULL,
+        "actorId" TEXT NOT NULL,
+        "expiresAt" TIMESTAMP(3) NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `).catch(() => {})
+
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "login_attempts" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "userId" TEXT NOT NULL,
+        "failedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `).catch(() => {})
+
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "enterprise_invites" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "code" TEXT NOT NULL UNIQUE,
+        "businessName" TEXT,
+        "plan" TEXT NOT NULL DEFAULT 'STARTER',
+        "createdBy" TEXT NOT NULL,
+        "isUsed" BOOLEAN NOT NULL DEFAULT false,
+        "usedAt" TIMESTAMP(3),
+        "enterpriseId" TEXT,
+        "expiresAt" TIMESTAMP(3) NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `).catch(() => {})
+
+    console.log('✅ [BOOT] Database schema verified & up to date.')
+  } catch (err: any) {
+    console.error('⚠️ [BOOT] Database schema verification error:', err?.message || err)
+  }
+}
+
 async function start() {
   console.log('🚀 [BOOT] Starting BraynPOS API restoration sequence...')
   console.log('🔗 [BOOT] PORT:', PORT)
   console.log('🔗 [BOOT] HOST:', HOST)
 
   try {
-    // Seed system ledger accounts first
+    // 1. Ensure all tables and columns exist
+    await ensureDatabaseSchema()
+
+    // 2. Seed system ledger accounts
     await seedAccounts().catch(e => console.error('Ledger Seed Error:', e))
     
-    // Auto-cleanup duplicates from double-click race conditions
+    // 3. Auto-cleanup duplicates from double-click race conditions
     await cleanupDuplicateItems().catch(e => console.error('Cleanup Error:', e))
     
-    // Wrap syncAdmin in a race to prevent silent DB hangs
+    // 4. Wrap syncAdmin in a race to prevent silent DB hangs
     console.log('⌚ [BOOT] Syncing Admin (Maintenance Hook)...')
     const syncPromise = syncAdmin()
     const timeoutPromise = new Promise((_, reject) => 
@@ -85,7 +185,7 @@ async function start() {
     await Promise.race([syncPromise, timeoutPromise])
     console.log('✅ [BOOT] syncAdmin completed.')
   } catch (err: any) {
-    console.warn(`⚠️ [BOOT] syncAdmin failed or timed out: ${err.message}. Continuing...`)
+    console.warn(`⚠️ [BOOT] Database bootstrap sequence failed or timed out: ${err.message}. Continuing...`)
   }
 
   console.log('🏗️ [BOOT] Building Fastify app...')
