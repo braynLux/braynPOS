@@ -1,10 +1,10 @@
--- ══════════════════════════════════════════════════════════════════════
+-- ==========================================================================
 -- Migration: 20260827180000_enterprise_multi_tenant_and_zero_redis
 -- Adds:
 --  1. Enterprise model & relations (channels, users, items, audit_logs)
 --  2. PLATFORM_OWNER to UserRole enum
 --  3. Zero-Redis Postgres tables (revoked_tokens, manager_approval_tokens, login_attempts)
--- ══════════════════════════════════════════════════════════════════════
+-- ==========================================================================
 
 -- 1. Add PLATFORM_OWNER to UserRole enum
 ALTER TYPE "UserRole" ADD VALUE IF NOT EXISTS 'PLATFORM_OWNER';
@@ -68,43 +68,52 @@ BEGIN
     END IF;
 END $$;
 
--- 4. Create Zero-Redis security infrastructure tables
+-- 4. Clean up any mismatched security tables from legacy attempts
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'revoked_tokens' AND column_name = 'id') THEN
+        DROP TABLE IF EXISTS "revoked_tokens" CASCADE;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'manager_approval_tokens' AND column_name = 'token') THEN
+        DROP TABLE IF EXISTS "manager_approval_tokens" CASCADE;
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'login_attempts' AND column_name = 'key') THEN
+        DROP TABLE IF EXISTS "login_attempts" CASCADE;
+    END IF;
+END $$;
+
+-- Create Zero-Redis security infrastructure tables matching Prisma schema EXACTLY
 CREATE TABLE IF NOT EXISTS "revoked_tokens" (
-    "id" TEXT NOT NULL,
     "token" TEXT NOT NULL,
-    "reason" TEXT,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "revoked_tokens_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "revoked_tokens_pkey" PRIMARY KEY ("token")
 );
-CREATE UNIQUE INDEX IF NOT EXISTS "revoked_tokens_token_key" ON "revoked_tokens"("token");
 CREATE INDEX IF NOT EXISTS "revoked_tokens_expiresAt_idx" ON "revoked_tokens"("expiresAt");
 
 CREATE TABLE IF NOT EXISTS "manager_approval_tokens" (
     "id" TEXT NOT NULL,
-    "token" TEXT NOT NULL,
-    "data" JSONB NOT NULL,
+    "action" TEXT NOT NULL,
+    "contextId" TEXT NOT NULL,
+    "channelId" TEXT,
+    "approverId" TEXT NOT NULL,
+    "actorId" TEXT NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "manager_approval_tokens_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX IF NOT EXISTS "manager_approval_tokens_token_key" ON "manager_approval_tokens"("token");
 CREATE INDEX IF NOT EXISTS "manager_approval_tokens_expiresAt_idx" ON "manager_approval_tokens"("expiresAt");
 
 CREATE TABLE IF NOT EXISTS "login_attempts" (
     "id" TEXT NOT NULL,
-    "key" TEXT NOT NULL,
-    "failures" INTEGER NOT NULL DEFAULT 1,
-    "expiresAt" TIMESTAMP(3) NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "userId" TEXT NOT NULL,
+    "failedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "login_attempts_pkey" PRIMARY KEY ("id")
 );
-CREATE UNIQUE INDEX IF NOT EXISTS "login_attempts_key_key" ON "login_attempts"("key");
-CREATE INDEX IF NOT EXISTS "login_attempts_expiresAt_idx" ON "login_attempts"("expiresAt");
+CREATE INDEX IF NOT EXISTS "login_attempts_userId_failedAt_idx" ON "login_attempts"("userId", "failedAt");
 
 -- 5. Create Enterprise Invites table (One-Time Invite Codes)
 CREATE TABLE IF NOT EXISTS "enterprise_invites" (

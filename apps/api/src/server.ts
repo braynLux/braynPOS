@@ -20,9 +20,6 @@ const HOST = process.env.API_HOST || '0.0.0.0'
  * Allows resetting the super-admin password via environment variable if lockouts occur.
  */
 async function syncAdmin() {
-  const resetPass = process.env.ADMIN_PASSWORD_RESET
-  if (!resetPass) return
-
   const { hashPassword } = await import('./lib/password.js')
   
   // Find or Create HQ Channel (Required for Super Admin)
@@ -33,25 +30,38 @@ async function syncAdmin() {
     })
   }
 
-  const passwordHash = await hashPassword(resetPass)
-  // FIX: Use email-based lookup instead of hardcoded static ID for security
-  await basePrisma.user.upsert({
-    where: { email: 'admin@brayn.app' },
-    create: {
-      username: 'admin',
-      email: 'admin@brayn.app',
-      passwordHash,
-      role: 'SUPER_ADMIN',
-      channelId: hqChannel.id,
-      status: 'ACTIVE',
-    },
-    update: {
-      passwordHash,
-      status: 'ACTIVE',
-    },
+  const defaultPassword = process.env.ADMIN_PASSWORD_RESET || process.env.DEFAULT_SUPERADMIN_PASSWORD || 'Admin@Brayn2026!'
+  const passwordHash = await hashPassword(defaultPassword)
+
+  const existingAdmin = await basePrisma.user.findFirst({
+    where: { OR: [{ username: 'admin' }, { email: 'admin@brayn.app' }] }
   })
-  
-  console.log('✅ [MAINTENANCE] Admin user synced/reset successfully.')
+
+  if (!existingAdmin) {
+    await basePrisma.user.create({
+      data: {
+        username: 'admin',
+        email: 'admin@brayn.app',
+        passwordHash,
+        role: 'PLATFORM_OWNER',
+        channelId: hqChannel.id,
+        status: 'ACTIVE',
+      },
+    })
+    console.log('✅ [BOOT] Default Platform Owner (admin) provisioned successfully.')
+  } else {
+    // If admin exists, ensure role is PLATFORM_OWNER and sync password if reset env var provided
+    const shouldUpdatePassword = Boolean(process.env.ADMIN_PASSWORD_RESET)
+    await basePrisma.user.update({
+      where: { id: existingAdmin.id },
+      data: {
+        role: 'PLATFORM_OWNER',
+        status: 'ACTIVE',
+        ...(shouldUpdatePassword ? { passwordHash } : {}),
+      },
+    })
+    console.log('✅ [BOOT] Platform Owner admin verified.')
+  }
 }
 
 async function start() {
