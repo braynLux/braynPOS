@@ -14,13 +14,14 @@ interface ListUsersQuery {
 }
 
 export class UsersService {
-  async findAll(query: ListUsersQuery, actor: { id: string; role: string; channelId: string | null }) {
+  async findAll(query: ListUsersQuery, actor: { id: string; role: string; channelId: string | null; enterpriseId?: string | null }) {
     const page = query.page ?? 1
     const limit = query.limit ?? 25
     const skip = (page - 1) * limit
 
-    // FIX 5: MANAGER_ADMIN and ADMIN are global roles — they see all channels
-    const isGlobalActor = GLOBAL_ADMIN_ROLES.includes(actor.role)
+    const isPlatformOwner = actor.role === 'PLATFORM_OWNER'
+    const isGlobalActor   = GLOBAL_ADMIN_ROLES.includes(actor.role) || isPlatformOwner
+    const enterpriseId    = actor.enterpriseId
 
     if (!isGlobalActor) {
       if (!actor.channelId) {
@@ -30,6 +31,7 @@ export class UsersService {
     }
 
     const where: Prisma.UserWhereInput = {
+      ...(enterpriseId && !isPlatformOwner && { enterpriseId }),
       ...(query.role && { role: query.role }),
       ...(query.channelId && { channelId: query.channelId }),
       ...(query.search && {
@@ -65,20 +67,29 @@ export class UsersService {
     }
   }
 
-  async findById(id: string, actor: { id: string; role: string; channelId: string | null }) {
+  async findById(id: string, actor: { id: string; role: string; channelId: string | null; enterpriseId?: string | null }) {
     const user = await prisma.user.findUniqueOrThrow({
       where: { id },
       select: {
         id: true, username: true, email: true, role: true,
         channelId: true, status: true, mfaEnabled: true,
         lastLoginAt: true, createdAt: true, updatedAt: true,
+        enterpriseId: true,
         channel: { select: { id: true, name: true, code: true } },
         staffProfile: true,
       },
     })
 
-    // FIX 5: Global roles see all users; non-global roles see same-channel only
-    const isGlobalActor = GLOBAL_ADMIN_ROLES.includes(actor.role)
+    const isPlatformOwner = actor.role === 'PLATFORM_OWNER'
+    const isGlobalActor   = GLOBAL_ADMIN_ROLES.includes(actor.role) || isPlatformOwner
+    const enterpriseId    = actor.enterpriseId
+
+    // Enterprise boundary check
+    if (enterpriseId && !isPlatformOwner && user.enterpriseId && user.enterpriseId !== enterpriseId) {
+      throw { statusCode: 403, message: 'Forbidden: Cannot access users from other enterprises' }
+    }
+
+    // Channel boundary check for branch staff
     if (!isGlobalActor && user.id !== actor.id) {
       if (user.channelId !== actor.channelId) {
         throw { statusCode: 403, message: 'Forbidden: Cannot access users from other channels' }
@@ -97,9 +108,10 @@ export class UsersService {
       channelId?: string | null
       status?:    'ACTIVE' | 'PENDING' | 'INACTIVE'
     },
-    actor: { role: string; channelId: string | null }
+    actor: { id?: string; role: string; channelId: string | null; enterpriseId?: string | null }
   ) {
-    const isGlobalActor = GLOBAL_ADMIN_ROLES.includes(actor.role)
+    const isPlatformOwner = actor.role === 'PLATFORM_OWNER'
+    const isGlobalActor   = GLOBAL_ADMIN_ROLES.includes(actor.role) || isPlatformOwner
     if (!isGlobalActor) {
       if (!actor.channelId) {
         throw { statusCode: 400, message: 'Your account has no channel assigned' }
@@ -111,38 +123,40 @@ export class UsersService {
 
     try {
       return await prisma.$transaction(async (tx: TransactionClient) => {
-        // FIX 4: Count inside transaction to make the admin cap atomic.
-        // Both checks and the create happen in the same serializable unit.
+        const enterpriseId = actor.enterpriseId
+
+        // Scoped admin caps per enterprise
         if (data.role === 'SUPER_ADMIN') {
           const count = await tx.user.count({
-            where: { role: 'SUPER_ADMIN', deletedAt: null },
+            where: { role: 'SUPER_ADMIN', enterpriseId: enterpriseId || null, deletedAt: null },
           })
           if (count >= 1) {
             throw {
               statusCode: 400,
-              message: 'System limit reached: Maximum 1 Super Admin allowed.',
+              message: 'Enterprise limit reached: Maximum 1 Super Admin allowed per enterprise.',
             }
           }
         } else if (data.role === 'MANAGER_ADMIN' || data.role === 'ADMIN') {
           const count = await tx.user.count({
-            where: { role: data.role, deletedAt: null },
+            where: { role: data.role, enterpriseId: enterpriseId || null, deletedAt: null },
           })
           if (count >= 2) {
             throw {
               statusCode: 400,
-              message: `System limit reached: Maximum 2 ${data.role} users allowed.`,
+              message: `Enterprise limit reached: Maximum 2 ${data.role} users allowed per enterprise.`,
             }
           }
         }
 
         const user = await tx.user.create({
           data: {
-            username:  data.username,
-            email:     data.email.trim().toLowerCase(),
+            username:     data.username,
+            email:        data.email.trim().toLowerCase(),
             passwordHash,
-            role:      data.role,
-            channelId: data.channelId ?? null,
-            status:    data.status    || 'ACTIVE',
+            role:         data.role,
+            enterpriseId: enterpriseId || null,
+            channelId:    data.channelId ?? null,
+            status:       data.status    || 'ACTIVE',
           },
           select: {
             id: true, username: true, email: true, role: true,
@@ -152,7 +166,7 @@ export class UsersService {
 
         logAction({
           action:     AUDIT.USER_CREATE,
-          actorId:    actor.role === 'SYSTEM' ? 'SYSTEM' : (actor as any).id || 'SYSTEM',
+          actorId:    actor.role === 'SYSTEM' ? 'SYSTEM' : actor.id || 'SYSTEM',
           actorRole:  actor.role,
           channelId:  data.channelId || undefined,
           targetType: 'User',
@@ -168,8 +182,6 @@ export class UsersService {
         const isEmailConflict  = fields.includes('email')
         const isUsernameConflict = fields.includes('username')
 
-        // FIX 3: Use $queryRaw to find soft-deleted users — soft-delete
-        // middleware filters deleted users from all findFirst queries.
         let message = `Conflict: User with this ${fields.join(', ')} already exists`
 
         if (isEmailConflict || isUsernameConflict) {
@@ -193,23 +205,24 @@ export class UsersService {
     }
   }
 
-  async update(id: string, data: Prisma.UserUpdateInput, actor: { id: string; role: string; channelId: string | null }) {
+  async update(id: string, data: Prisma.UserUpdateInput, actor: { id: string; role: string; channelId: string | null; enterpriseId?: string | null }) {
     if (typeof data.email === 'string') {
       data.email = data.email.trim().toLowerCase()
     }
     const existing = await this.findById(id, actor)
+    const enterpriseId = actor.enterpriseId
 
-    // FIX 4: Admin count check inside transaction to prevent TOCTOU race
+    // Scoped admin caps per enterprise
     if (data.role === 'SUPER_ADMIN') {
       if (existing.role !== 'SUPER_ADMIN') {
         await prisma.$transaction(async (tx: TransactionClient) => {
           const count = await tx.user.count({
-            where: { role: 'SUPER_ADMIN', deletedAt: null },
+            where: { role: 'SUPER_ADMIN', enterpriseId: enterpriseId || null, deletedAt: null },
           })
           if (count >= 1) {
             throw {
               statusCode: 400,
-              message: 'System limit reached: Maximum 1 Super Admin allowed.',
+              message: 'Enterprise limit reached: Maximum 1 Super Admin allowed per enterprise.',
             }
           }
         })
@@ -218,12 +231,12 @@ export class UsersService {
       if (existing.role !== data.role) {
         await prisma.$transaction(async (tx: TransactionClient) => {
           const count = await tx.user.count({
-            where: { role: data.role as UserRole, deletedAt: null },
+            where: { role: data.role as UserRole, enterpriseId: enterpriseId || null, deletedAt: null },
           })
           if (count >= 2) {
             throw {
               statusCode: 400,
-              message: `System limit reached: Maximum 2 ${String(data.role)} users allowed.`,
+              message: `Enterprise limit reached: Maximum 2 ${String(data.role)} users allowed per enterprise.`,
             }
           }
         })
@@ -272,31 +285,33 @@ export class UsersService {
     })
   }
 
-  async softDelete(id: string, actor: { id: string; role: string; channelId: string | null }) {
+  async softDelete(id: string, actor: { id: string; role: string; channelId: string | null; enterpriseId?: string | null }) {
     const existing = await this.findById(id, actor)
+
     const user = await prisma.user.update({
       where: { id },
-      data: { deletedAt: new Date(), status: 'INACTIVE' },
+      data: {
+        deletedAt: new Date(),
+        status: 'INACTIVE',
+      },
+      select: { id: true, username: true, email: true, channelId: true },
     })
 
     logAction({
       action:     AUDIT.USER_DELETE,
       actorId:    actor.id,
       actorRole:  actor.role,
-      channelId:  existing.channelId || undefined,
+      channelId:  user.channelId || undefined,
       targetType: 'User',
       targetId:   id,
     })
 
-    return user
+    return { message: 'User deleted successfully' }
   }
 
   async resetPassword(id: string, newPassword: string) {
     const passwordHash = await hashPassword(newPassword)
 
-    // FIX 1: Revoke all refresh tokens when an admin resets a password.
-    // Without this, a stolen token remains valid indefinitely even after
-    // the compromised account's password is changed by an administrator.
     await prisma.$transaction([
       prisma.user.update({
         where: { id },
@@ -336,7 +351,6 @@ export class UsersService {
 
     const passwordHash = await hashPassword(newPassword)
 
-    // FIX 2: Revoke all refresh tokens on self-service password change too.
     await prisma.$transaction([
       prisma.user.update({
         where: { id },

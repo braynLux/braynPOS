@@ -96,7 +96,7 @@ export const reportsRoutes: FastifyPluginAsync = async (app) => {
       startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
       endDate:   z.string().regex(/^\d{4}-\d{2}-\d{2}/),
     }).parse(request.query)
-    return reportsService.adminDashboardAnalytics(q.startDate, q.endDate)
+    return reportsService.adminDashboardAnalytics(q.startDate, q.endDate, request.user.enterpriseId)
   })
 
   // GET /reports/sales-forecast

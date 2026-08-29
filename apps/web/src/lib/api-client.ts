@@ -28,6 +28,52 @@ export class ApiError extends Error {
   }
 }
 
+export function sanitizeErrorMessage(rawMessage: unknown): string {
+  if (!rawMessage) return 'An unexpected error occurred. Please try again.'
+  const msg = String(rawMessage).trim()
+  if (!msg) return 'An unexpected error occurred. Please try again.'
+
+  const lower = msg.toLowerCase()
+
+  // Database / Prisma connection error
+  if (
+    lower.includes('reach database') ||
+    lower.includes('database server') ||
+    lower.includes('15432') ||
+    lower.includes('econnrefused') ||
+    lower.includes('prisma') ||
+    lower.includes('invocation in')
+  ) {
+    return 'Unable to connect to the database server. Please ensure the database is running and try again.'
+  }
+
+  // Network / Fetch failure
+  if (
+    lower.includes('failed to fetch') ||
+    lower.includes('networkerror') ||
+    lower.includes('network error') ||
+    lower.includes('load failed') ||
+    lower.includes('enotfound')
+  ) {
+    return 'Unable to reach the server. Please check your network connection or make sure the API is running.'
+  }
+
+  // SQL / DB syntax / Internal errors
+  if (
+    lower.includes('syntax error') ||
+    lower.includes('column') ||
+    lower.includes('relation') ||
+    lower.includes('pg_') ||
+    lower.includes('select ') ||
+    lower.includes('update ') ||
+    lower.includes('insert ')
+  ) {
+    return 'A database error occurred. Please try again shortly.'
+  }
+
+  return msg
+}
+
 async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T> {
   const { token, ...fetchOptions } = options
   const cleanPath = path.startsWith('/api/v1') ? path.replace('/api/v1', '') : path
@@ -41,11 +87,17 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const res = await fetch(`${API_BASE}${cleanPath}`, {
-    ...fetchOptions,
-    headers,
-    cache: 'no-store',
-  })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${cleanPath}`, {
+      ...fetchOptions,
+      headers,
+      cache: 'no-store',
+    })
+  } catch (fetchErr: any) {
+    const cleanMsg = sanitizeErrorMessage(fetchErr?.message || fetchErr)
+    throw new ApiError(cleanMsg, 0, 'NETWORK_ERROR')
+  }
 
   if (res.status === 401 && !path.includes('/auth/refresh') && !path.includes('/auth/login')) {
     // Attempt silent refresh
@@ -88,7 +140,8 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({ message: res.statusText })) as Record<string, unknown>
-    const errorMessage = errorBody.message || errorBody.error || `API Error: ${res.status}`
+    const rawErrorMessage = String(errorBody.message || errorBody.error || `API Error: ${res.status}`)
+    const errorMessage = sanitizeErrorMessage(rawErrorMessage)
     
     // Log specialized warning for multi-tenancy blocks
     if (res.status === 403) {
@@ -98,13 +151,14 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
     }
 
     throw new ApiError(
-      String(errorMessage),
+      errorMessage,
       res.status,
       typeof errorBody.code === 'string' ? errorBody.code : undefined,
       errorBody.data,
       errorBody
     )
   }
+
 
   // Handle 204 No Content or empty responses
   if (res.status === 204) {

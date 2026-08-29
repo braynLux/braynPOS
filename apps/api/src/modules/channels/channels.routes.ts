@@ -31,17 +31,42 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
   // not by hiding channel names.
   app.get('/', {
     preHandler: [authorize(
-      'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'STOREKEEPER', 'PROMOTER'
     )],
-  }, async () => {
+  }, async (request) => {
     const { prisma: db } = await import('../../lib/prisma.js')
+    const enterpriseId = request.user.enterpriseId
+    const isPlatformOwner = request.user.role === 'PLATFORM_OWNER'
+
+    if (isPlatformOwner) {
+      return db.$queryRaw`
+        SELECT id, name, code, type, "isMainWarehouse",
+               address, phone, email, "featureFlags",
+               "enterpriseId", "createdAt", "updatedAt"
+        FROM   channels
+        WHERE  "deletedAt" IS NULL
+        ORDER  BY name ASC
+      `
+    }
+
+    if (!enterpriseId) {
+      return db.$queryRaw`
+        SELECT id, name, code, type, "isMainWarehouse",
+               address, phone, email, "featureFlags",
+               "enterpriseId", "createdAt", "updatedAt"
+        FROM   channels
+        WHERE  "deletedAt" IS NULL AND "enterpriseId" IS NULL
+        ORDER  BY name ASC
+      `
+    }
+
     return db.$queryRaw`
       SELECT id, name, code, type, "isMainWarehouse",
              address, phone, email, "featureFlags",
-             "createdAt", "updatedAt"
+             "enterpriseId", "createdAt", "updatedAt"
       FROM   channels
-      WHERE  "deletedAt" IS NULL
+      WHERE  "deletedAt" IS NULL AND "enterpriseId" = ${enterpriseId}
       ORDER  BY name ASC
     `
   })

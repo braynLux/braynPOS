@@ -1,23 +1,11 @@
 import fp from 'fastify-plugin'
 import type { FastifyInstance } from 'fastify'
 import { prisma } from '../lib/prisma.js'
-import { redis } from '../lib/redis.js'
 import { logger } from '../lib/logger.js'
 
 const DB_LATENCY_WARN_MS  = 200
 const DB_LATENCY_FATAL_MS = 2000
 
-// ── FIX: Internal-only secret for /ready endpoint ─────────────────────
-// /ready exposes heap usage, DB latency, and uptime — useful for
-// orchestrators (k8s, Docker) but gives attackers infrastructure
-// profiling data if publicly accessible.
-//
-// Two-tier access:
-//   - No header      → lightweight public /health (status + uptime only)
-//   - X-Health-Token → full /ready with diagnostics (internal/infra only)
-//
-// Set HEALTH_TOKEN in your secrets manager. If unset, /ready is
-// blocked entirely in production to fail safe.
 const HEALTH_TOKEN = process.env.HEALTH_TOKEN
 
 let startedAt:    Date
@@ -34,7 +22,6 @@ export const healthPlugin = fp(async (app: FastifyInstance) => {
   startedAt = new Date()
 
   // ── GET /health — public, lightweight ─────────────────────────────
-  // Returns only status + uptime. Safe for public load balancer checks.
   app.get('/health', async (_request, reply) => {
     reply.status(200).send({
       status:      'ok',
@@ -45,13 +32,10 @@ export const healthPlugin = fp(async (app: FastifyInstance) => {
     })
   })
 
-  // ── GET /ready — internal only, requires token ─────────────────────
+  // ── GET /ready — internal only, requires token in production ───────
   app.get('/ready', async (request, reply) => {
-    // FIX: Require internal token in production to prevent infrastructure
-    // profiling via publicly accessible diagnostic data.
     if (process.env.NODE_ENV === 'production') {
       if (!HEALTH_TOKEN) {
-        // HEALTH_TOKEN not configured — block entirely to fail safe
         return reply.status(503).send({
           status:  'misconfigured',
           message: 'HEALTH_TOKEN env var not set. /ready is disabled until configured.',
@@ -69,9 +53,6 @@ export const healthPlugin = fp(async (app: FastifyInstance) => {
 
     checks.database = await checkDatabase()
     if (!checks.database.ok) overallReady = false
-
-    checks.redis = await checkRedis()
-    if (!checks.redis.ok) overallReady = false
 
     checks.memory = checkMemory()
     if (!checks.memory.ok) overallReady = false
@@ -112,16 +93,6 @@ async function checkDatabase(): Promise<CheckResult> {
     return { ok: true, latencyMs }
   } catch (err: any) {
     return { ok: false, latencyMs: Date.now() - start, message: 'database unreachable', detail: err.message }
-  }
-}
-
-async function checkRedis(): Promise<CheckResult> {
-  const start = Date.now()
-  try {
-    await redis.ping()
-    return { ok: true, latencyMs: Date.now() - start }
-  } catch (err: any) {
-    return { ok: false, message: 'redis unreachable', detail: err.message }
   }
 }
 

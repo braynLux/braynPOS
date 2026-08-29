@@ -10,7 +10,7 @@ import { diagnosticsService } from '../support/diagnostics.service.js'
 import { z }                from 'zod'
 
 const CRITICAL_STOCK_THRESHOLD = 0
-const GLOBAL_SETTINGS_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const GLOBAL_SETTINGS_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 const printerTestSchema = z.object({
   host: z.string()
@@ -29,7 +29,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   app.get('/settings', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'STOREKEEPER',
     )],
   }, async (request) => {
@@ -45,7 +45,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   app.get('/summary', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'STOREKEEPER',
     )],
   }, async (request) => {

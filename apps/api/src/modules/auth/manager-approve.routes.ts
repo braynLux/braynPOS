@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
-import { redis } from '../../lib/redis.js'
+import { storeApprovalToken, getApprovalToken, deleteApprovalToken } from '../../lib/pg-store.js'
 import { verifyPassword } from '../../lib/password.js'
 import { logAction, AUDIT } from '../../lib/audit.js'
 import { randomUUID } from 'crypto'
@@ -71,6 +71,7 @@ export async function managerApproveRoutes(app: FastifyInstance) {
         : ['MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
     } else if (action === 'negative_margin' && typeof (request.body as any).marginPercent === 'number') {
       const margin = (request.body as any).marginPercent
+
       // Audit finding: Stepped Authority
       // Floor Managers can authorize down to -5% margin.
       // Anything deeper requires MANAGER_ADMIN, ADMIN or SUPER_ADMIN.
@@ -101,7 +102,6 @@ export async function managerApproveRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'No manager available in this channel' })
     }
 
-    // Check PIN against each manager's password hash
     let approverId: string | null = null
     for (const mgr of managers) {
       const valid = await verifyPassword(mgr.passwordHash, pin)
@@ -113,21 +113,13 @@ export async function managerApproveRoutes(app: FastifyInstance) {
     }
 
     const approvalToken = randomUUID()
-    const tokenKey      = `approval:${approvalToken}`
-
-    // ── FIX: channelId is stored in token data and checked on consume ─
-    // Previously validateApprovalToken only checked action + contextId.
-    // A token issued for Channel A's purchase delete could be reused
-    // against Channel B's purchase with the same contextId.
-    const tokenData = JSON.stringify({
+    await storeApprovalToken(approvalToken, {
       action,
       contextId,
-      channelId,  // ← persisted so validator can enforce it
+      channelId,
       approverId,
       actorId: actor.sub,
-    })
-
-    await redis.setex(tokenKey, 120, tokenData)
+    }, 120)
 
     logAction({
       action:    AUDIT.MANAGER_APPROVAL,
@@ -145,19 +137,14 @@ export async function managerApproveRoutes(app: FastifyInstance) {
 }
 
 // ── APPROVAL TOKEN VALIDATOR ──────────────────────────────────────────
-// FIX: Now accepts and validates expectedChannelId.
-// Pass the channelId from the request context so cross-channel replay
-// attacks (using a valid token from Channel A against Channel B) are blocked.
 export async function validateApprovalToken(
   token:             string,
   action:            string,
   contextId:         string,
   expectedChannelId?: string
 ): Promise<{ approverId: string; actorId: string } | null> {
-  const data = await redis.get(`approval:${token}`)
-  if (!data) return null
-
-  const parsed = JSON.parse(data)
+  const parsed = await getApprovalToken(token)
+  if (!parsed) return null
 
   if (parsed.action !== action || parsed.contextId !== contextId) return null
 
@@ -165,6 +152,6 @@ export async function validateApprovalToken(
   if (expectedChannelId && parsed.channelId !== expectedChannelId) return null
 
   // Consume token — one-time use
-  await redis.del(`approval:${token}`)
+  await deleteApprovalToken(token)
   return { approverId: parsed.approverId, actorId: parsed.actorId }
 }

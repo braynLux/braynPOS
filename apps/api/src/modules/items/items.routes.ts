@@ -530,6 +530,17 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     const data = await request.file()
     if (!data || !data.file) throw { statusCode: 400, message: 'CSV file required' }
     const buffer = await data.toBuffer()
-    return csvImportService.importItems(buffer)
+
+    // FIX: channelId was never collected at all — imported items had no
+    // InventoryBalance anywhere (see csv-import.service.ts). Accept it as a
+    // form field alongside the file, falling back to the uploader's own
+    // channel if they're not HQ-wide.
+    const channelIdField = (data.fields?.channelId as any)?.value as string | undefined
+    const channelId = channelIdField || request.user.channelId || undefined
+    if (!channelId) {
+      throw { statusCode: 400, message: 'channelId is required — specify which channel these items belong to' }
+    }
+
+    return csvImportService.importItems(buffer, channelId)
   })
 }

@@ -51,7 +51,12 @@ const DUAL_CHANNEL_MODELS = new Set([
   'Transfer',
 ])
 
-const ADMIN_ROLES = new Set(['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'])
+// Models directly isolated at the Enterprise level
+const ENTERPRISE_MODELS = new Set([
+  'Channel', 'User', 'Item', 'AuditLog'
+])
+
+const ADMIN_ROLES = new Set(['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'])
 
 export const multiTenantExtension = Prisma.defineExtension((client) => {
   return client.$extends({
@@ -59,14 +64,45 @@ export const multiTenantExtension = Prisma.defineExtension((client) => {
       $allModels: {
         async $allOperations({ model, operation, args, query }) {
           const ctx = requestContext.getStore()
-          const skip = !ctx || !ctx.channelId || ADMIN_ROLES.has(ctx.role || '') || !ISOLATED_MODELS.has(model)
+          if (!ctx) return query(args)
 
-          if (skip) {
+          const castArgs = args as any
+          const isPlatformOwner = ctx.role === 'PLATFORM_OWNER'
+
+          // ── 1. Enterprise-Level Isolation ─────────────────────────────
+          // If the model belongs to an enterprise and user is not PLATFORM_OWNER,
+          // strictly enforce enterpriseId scoping on all operations.
+          if (ctx.enterpriseId && !isPlatformOwner && ENTERPRISE_MODELS.has(model)) {
+            const enterpriseId = ctx.enterpriseId
+
+            if (READ_OPS.has(operation) || MUTATE_OPS.has(operation)) {
+              castArgs.where = castArgs.where || {}
+              if (castArgs.where.enterpriseId === undefined) {
+                castArgs.where.enterpriseId = enterpriseId
+              }
+            } else if (WRITE_OPS.has(operation)) {
+              if (operation === 'create') {
+                castArgs.data = castArgs.data || {}
+                if (castArgs.data.enterpriseId === undefined) {
+                  castArgs.data.enterpriseId = enterpriseId
+                }
+              } else if (operation === 'createMany') {
+                if (Array.isArray(castArgs.data)) {
+                  castArgs.data = castArgs.data.map((row: any) =>
+                    row.enterpriseId !== undefined ? row : { ...row, enterpriseId }
+                  )
+                }
+              }
+            }
+          }
+
+          // ── 2. Channel-Level Isolation ────────────────────────────────
+          const skipChannel = !ctx.channelId || ADMIN_ROLES.has(ctx.role || '') || !ISOLATED_MODELS.has(model)
+          if (skipChannel) {
             return query(args)
           }
 
           const channelId = ctx.channelId
-          const castArgs  = args as any
 
           // ── READ operations ──────────────────────────────────────────
           if (READ_OPS.has(operation)) {

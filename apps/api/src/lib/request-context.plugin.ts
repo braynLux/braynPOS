@@ -3,10 +3,11 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { AsyncLocalStorage } from 'async_hooks'
 
 interface RequestContext {
-  requestId: string
-  userId?:   string
-  role?:     string
-  channelId?: string
+  requestId:     string
+  userId?:       string
+  role?:         string
+  channelId?:    string
+  enterpriseId?: string
 }
 
 export const requestContext = new AsyncLocalStorage<RequestContext>()

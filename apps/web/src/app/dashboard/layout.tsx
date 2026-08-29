@@ -14,15 +14,19 @@ import { SystemHealthPill } from './SystemHealthPill'
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { isAuthenticated, user, logout, accessToken: token } = useAuthStore()
+  const { isAuthenticated, user, logout, exitWorkspace, isPlatformOwnerSwitched, accessToken: token } = useAuthStore()
   const { isOnline, getPendingCount, syncPendingSales } = useOfflineStore()
   const pendingCount = getPendingCount()
 
-  const roleNav = user?.role ? (NAV_ITEMS_BY_ROLE[user.role] || NAV_ITEMS_BY_ROLE['CASHIER']) : []
+  const isSuperOrPlatformOwner = user?.role === 'PLATFORM_OWNER' || user?.role === 'SUPER_ADMIN'
+  const isSwitchedWorkspace = isPlatformOwnerSwitched || (isSuperOrPlatformOwner && !!user?.enterpriseId && pathname !== '/dashboard/enterprises')
+
+  // When a Platform Owner is switched into a tenant, give them the full Manager Admin navigation
+  const effectiveRole = (isPlatformOwnerSwitched && user?.enterpriseId) ? 'MANAGER_ADMIN' : (user?.role || 'CASHIER')
+  const roleNav = NAV_ITEMS_BY_ROLE[effectiveRole] || NAV_ITEMS_BY_ROLE['CASHIER']
   const isPosMode = pathname === '/dashboard/pos'
 
   const [mounted, setMounted] = useState(false)
-  // FIX: Mobile sidebar open/close state
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => { setMounted(true) }, [])
@@ -33,13 +37,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (!isAuthenticated || !mounted) return
+    if (isSuperOrPlatformOwner) return // Super Admin / Platform Owner has full access across all dashboard pages
+
     const allowedHrefs = roleNav.flatMap(g => g.items.map(i => i.href))
     const landingPage = user?.role ? ROLE_LANDING_PAGES[user.role] : '/dashboard'
     const isAllowed = pathname === landingPage || allowedHrefs.some(href => pathname === href || pathname.startsWith(href + '/'))
     if (!isAllowed && pathname !== '/dashboard/settings') {
       router.replace(landingPage!)
     }
-  }, [isAuthenticated, pathname, user, roleNav, router])
+  }, [isAuthenticated, pathname, user, roleNav, router, isSuperOrPlatformOwner, mounted])
 
   useEffect(() => {
     const handleOnline  = () => useOfflineStore.getState().setOnline(true)
@@ -73,7 +79,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (!isAuthenticated || !token || !user) return
-    const isAuthorized = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER'].includes(user.role)
+    const isAuthorized = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user.role)
     if (!isAuthorized) return
 
     const socket = io(process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080', {
@@ -133,14 +139,34 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!isAuthenticated) return null
 
-  // Call as SidebarContent(), not <SidebarContent />: as JSX it's a new component
-  // type every render, so React remounts the whole sidebar subtree on every
-  // pathname/sidebarOpen/offline-store change (same pitfall as CartPanel in pos/page.tsx).
+  const isPlatformView = user?.role === 'PLATFORM_OWNER' && !isPlatformOwnerSwitched
+
   const SidebarContent = () => (
     <>
-      <div className="sidebar-brand">
-        <h1>LUX</h1>
-        <p style={{ marginTop: 4, opacity: 0.7 }}>Hybrid Edition v2.0</p>
+      <div className="sidebar-brand" style={isPlatformView ? {
+        background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(217, 119, 6, 0.04))',
+        borderBottom: '2px solid rgba(245, 158, 11, 0.3)',
+      } : undefined}>
+        <h1 style={{ fontSize: '1.25rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {isPlatformView ? (
+            <span style={{
+              background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              fontWeight: 900,
+              letterSpacing: '-0.02em',
+            }}>braynPOS Fleet HQ</span>
+          ) : (
+            user?.enterprise?.name || 'LUX FLEET'
+          )}
+        </h1>
+        <p style={{ marginTop: 4, opacity: 0.7, fontSize: '0.75rem' }}>
+          {isPlatformView
+            ? '🛡️ Platform Owner • Master Control'
+            : `${user?.channel?.name || 'Master Fleet'} • ${user?.enterprise?.plan || 'Platform Admin'}`
+          }
+        </p>
       </div>
 
       <div className="sidebar-nav">
@@ -192,45 +218,93 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   )
 
   return (
-    <div className="layout">
-      {!isPosMode && (
-        <>
-          {/* Desktop sidebar */}
-          <nav className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="main-sidebar">
-            {SidebarContent()}
-          </nav>
-
-          {/* Mobile overlay backdrop */}
-          {sidebarOpen && (
-            <div
-              className="sidebar-overlay"
-              onClick={() => setSidebarOpen(false)}
-              aria-hidden="true"
-            />
-          )}
-
-          {/* Mobile top bar with hamburger */}
-          <div className="mobile-topbar" id="mobile-topbar">
-            <button
-              className="hamburger-btn"
-              onClick={() => setSidebarOpen(s => !s)}
-              aria-label="Toggle navigation menu"
-              aria-expanded={sidebarOpen}
-            >
-              {sidebarOpen ? '✕' : '☰'}
-            </button>
-            <span className="mobile-brand">LUX</span>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              {!isOnline && <span className="badge badge-warning" style={{ fontSize: '0.65rem' }}>Offline</span>}
-              {pendingCount > 0 && <span className="badge badge-warning" style={{ fontSize: '0.65rem' }}>⚡{pendingCount}</span>}
-            </div>
+    <div className="layout" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      {/* ── Platform Super Admin Workspace Impersonation Banner ── */}
+      {isSwitchedWorkspace && (
+        <div style={{
+          background: 'linear-gradient(90deg, #0f172a 0%, #1e293b 100%)',
+          color: '#ffffff',
+          padding: '10px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: '0.85rem',
+          fontWeight: 600,
+          borderBottom: '2px solid var(--primary)',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+          zIndex: 99,
+          position: 'sticky',
+          top: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: '1.1rem' }}>🛡️</span>
+            <span>
+              Platform Super Admin: Active in <strong>{user?.enterprise?.name}</strong> ({user?.channel?.name || 'Headquarters'})
+            </span>
           </div>
-        </>
+          <button
+            onClick={() => {
+              exitWorkspace()
+              router.push('/dashboard/enterprises')
+            }}
+            className="btn btn-sm"
+            style={{
+              background: 'var(--primary)',
+              color: '#ffffff',
+              border: 'none',
+              padding: '6px 14px',
+              fontSize: '0.8rem',
+              fontWeight: 700,
+              borderRadius: 'var(--radius-md)',
+              cursor: 'pointer',
+            }}
+          >
+            ← Exit to Master Fleet
+          </button>
+        </div>
       )}
 
-      <main className={`main-content ${isPosMode ? 'full-width' : ''}`} id="main-content">
-        {children}
-      </main>
+      <div style={{ display: 'flex', flex: 1 }}>
+        {!isPosMode && (
+          <>
+            {/* Desktop sidebar */}
+            <nav className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="main-sidebar">
+              <SidebarContent />
+            </nav>
+
+            {/* Mobile overlay backdrop */}
+            {sidebarOpen && (
+              <div
+                className="sidebar-overlay"
+                onClick={() => setSidebarOpen(false)}
+                aria-hidden="true"
+              />
+            )}
+
+            {/* Mobile top bar with hamburger */}
+            <div className="mobile-topbar" id="mobile-topbar">
+              <button
+                className="hamburger-btn"
+                onClick={() => setSidebarOpen(s => !s)}
+                aria-label="Toggle navigation menu"
+                aria-expanded={sidebarOpen}
+              >
+                {sidebarOpen ? '✕' : '☰'}
+              </button>
+              <span className="mobile-brand">LUX</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {!isOnline && <span className="badge badge-warning" style={{ fontSize: '0.65rem' }}>Offline</span>}
+                {pendingCount > 0 && <span className="badge badge-warning" style={{ fontSize: '0.65rem' }}>⚡{pendingCount}</span>}
+              </div>
+            </div>
+          </>
+        )}
+
+        <main className={`main-content ${isPosMode ? 'full-width' : ''}`} id="main-content" style={{ flex: 1 }}>
+          {children}
+        </main>
+      </div>
+
       <ChatInterface />
 
       <style jsx>{`

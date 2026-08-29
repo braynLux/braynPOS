@@ -1,12 +1,11 @@
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify'
-import { redis } from '../lib/redis.js'
-import { isValidIdempotencyKey } from '../lib/idempotency.js'
+﻿import type { FastifyPluginAsync, FastifyRequest } from 'fastify'
+import { checkIdempotency, isValidIdempotencyKey } from '../lib/idempotency.js'
 
 /**
  * Idempotency check middleware for Fastify.
  * Apply to: POST /sales/sync-offline, POST /payments/webhook
  *
- * If an Idempotency-Key header is present, checks Redis for a cached response.
+ * If an Idempotency-Key header is present, checks PostgreSQL for a cached response.
  * If found, returns the cached response immediately without processing the request.
  */
 export const idempotencyCheckMiddleware: FastifyPluginAsync = async (app) => {
@@ -25,16 +24,15 @@ export const idempotencyCheckMiddleware: FastifyPluginAsync = async (app) => {
       return
     }
 
-    // Check Redis cache for existing response
+    // Check DB for existing response
     try {
-      const cached = await redis.get(`idem:${key}`)
-      if (cached) {
-        const stored = JSON.parse(cached) as { responseBody: unknown; statusCode: number }
+      const stored = await checkIdempotency(key)
+      if (stored) {
         reply.status(stored.statusCode).send(stored.responseBody)
         return
       }
     } catch (err) {
-      request.log.warn({ err }, "idempotency Redis unavailable — bypassing")
+      request.log.warn({ err }, "idempotency lookup error — continuing request")
     }
 
     // Attach key to request for downstream use

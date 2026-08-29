@@ -55,6 +55,7 @@ export const commitSaleSchema = z.object({
   notes:         z.string().max(500).optional().nullable(),   // no essays in notes
   discountAmount: z.number().min(0).max(100_000_000).optional().nullable(),
   approvalToken: z.string().max(500).optional().nullable(),
+  promoterId:    z.string().uuid().optional().nullable(),
   dueDate:       z.string().datetime({ offset: true }).optional().nullable(), // must be ISO date
 })
 

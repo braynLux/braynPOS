@@ -1,7 +1,7 @@
 import { prisma } from '../../lib/prisma.js'
 import { hashPassword, verifyPassword } from '../../lib/password.js'
 import { signAccessToken, signRefreshToken, verifyRefreshToken, REFRESH_TOKEN_TTL_MS } from '../../lib/jwt.js'
-import { redis } from '../../lib/redis.js'
+import { recordLoginFailure, clearLoginFailures } from '../../lib/pg-store.js'
 import { revokeAccessToken } from '../../middleware/authenticate.js'
 import { authLogger } from '../../lib/logger.js'
 import type { LoginInput, RegisterInput, ChangePasswordInput } from './auth.schema.js'
@@ -14,7 +14,7 @@ export class AuthService {
   async login(input: LoginInput) {
     const user = await prisma.user.findUnique({
       where:   { username: input.username },
-      include: { channel: true },
+      include: { channel: true, enterprise: true },
     })
 
     if (!user) {
@@ -35,9 +35,7 @@ export class AuthService {
     }
 
     if (!valid) {
-      const failKey = `login_failures:${user.id}`
-      const failures = await redis.incr(failKey)
-      await redis.expire(failKey, 900)  // 15-minute window
+      const failures = await recordLoginFailure(user.id)
 
       if (failures >= MAX_FAILED_ATTEMPTS) {
         await prisma.user.update({
@@ -52,13 +50,13 @@ export class AuthService {
       throw { statusCode: 401, message: 'Invalid username or password' }
     }
 
-    await redis.del(`login_failures:${user.id}`)
+    await clearLoginFailures(user.id)
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })
 
-    // MFA is disabled — always issue a fully verified token
+    // Issue access token with enterpriseId & channelId
     const accessToken  = signAccessToken({
       sub: user.id, username: user.username, email: user.email, role: user.role,
-      channelId: user.channelId, mfaVerified: true,
+      channelId: user.channelId, enterpriseId: user.enterpriseId, mfaVerified: true,
     })
     const refreshToken = signRefreshToken(user.id)
 
@@ -119,7 +117,8 @@ export class AuthService {
     await prisma.refreshToken.update({ where: { id: storedToken.id }, data: { revokedAt: new Date() } })
 
     const accessToken     = signAccessToken({
-      sub: user.id, username: user.username, email: user.email, role: user.role, channelId: user.channelId, mfaVerified: true,
+      sub: user.id, username: user.username, email: user.email, role: user.role,
+      channelId: user.channelId, enterpriseId: user.enterpriseId, mfaVerified: true,
     })
     const newRefreshToken = signRefreshToken(user.id)
 
@@ -166,8 +165,8 @@ export class AuthService {
       prisma.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } }),
     ])
 
-    // Reset login failures on password change
-    await redis.del(`login_failures:${userId}`)
+    // Clear login failures on password change
+    await clearLoginFailures(userId)
 
     // Revoke the current access token so the session ends immediately
     if (currentAccessToken) {

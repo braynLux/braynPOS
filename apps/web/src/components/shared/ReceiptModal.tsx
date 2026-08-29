@@ -13,7 +13,7 @@ interface ReceiptData {
   customer?: { name: string; phone?: string }
   items:     Array<{ name: string; sku: string; quantity: number; unitPrice: number; lineTotal: number }>
   totals:    { subtotal: number; discount: number; tax: number; total: number }
-  payments:  Array<{ method: string; amount: number }>
+  payments:  Array<{ method: string; amount: number; reference?: string }>
   cashier?:   string
   vatPIN?:    string
 }
@@ -288,8 +288,15 @@ export function ReceiptModal({ saleId, onClose }: ReceiptModalProps) {
           <div style={{ marginTop: 20, fontSize: '0.85rem', color: '#000' }}>
             <div style={{ fontWeight: 800, marginBottom: 8, borderBottom: '1px solid #ddd', paddingBottom: 4 }}>PAYMENTS</div>
             {data?.payments.map((p, idx) => (
-              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-                <span>{p.method.replace('_', ' ')}</span>
+              <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: '0.85rem' }}>
+                <div>
+                  <span>{p.method.replace(/_/g, ' ')}</span>
+                  {p.reference && (
+                    <div style={{ fontSize: '0.72rem', color: '#555', fontStyle: 'italic' }}>
+                      Ref: {p.reference}
+                    </div>
+                  )}
+                </div>
                 <span style={{ fontWeight: 600 }}>{p.amount.toLocaleString()}</span>
               </div>
             ))}
@@ -362,7 +369,7 @@ function formatReceiptText(data: ReceiptData, settings: ReceiptSettings): string
     '──────────────────────',
     `TOTAL: ${data.totals.total.toLocaleString()}`,
     '──────────────────────',
-    ...data.payments.map(p => `${p.method.replace('_', ' ')}: ${p.amount.toLocaleString()}`),
+    ...data.payments.map(p => `${p.method.replace(/_/g, ' ')}${p.reference ? ` (Ref: ${p.reference})` : ''}: ${p.amount.toLocaleString()}`),
     '',
     settings.receiptFooter || '',
     settings.showPoweredBy !== false ? 'Powered by LUX POS' : '',

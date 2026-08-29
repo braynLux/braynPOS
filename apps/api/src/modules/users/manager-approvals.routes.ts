@@ -4,7 +4,7 @@ import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
-import { redis } from '../../lib/redis.js'
+import { storeApprovalToken } from '../../lib/pg-store.js'
 
 export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -75,17 +75,13 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const approvalToken = randomUUID()
-    const tokenKey = `approval:${approvalToken}`
-    const tokenData = JSON.stringify({ 
+    await storeApprovalToken(approvalToken, { 
       action: approval.action, 
       contextId: approval.contextId, 
       channelId: approval.channelId, 
       approverId: request.user.sub, 
       actorId: approval.requesterId 
-    })
-    
-    // Redis TTL 1 hour for these requested approvals (longer than PIN ones)
-    await redis.setex(tokenKey, 3600, tokenData)
+    }, 3600)
 
     // If it's a user creation approval, activate the user
     if (approval.action === 'user_create') {

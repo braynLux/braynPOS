@@ -8,11 +8,6 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // GET /receipts/:saleId
-  // FIX 1: Added authorize() — was completely open to any authenticated user
-  // FIX 1: Added channel scoping — CASHIER from Channel A could fetch
-  //       receipts for sales from Channel B
-  // FIX 10: Added deletedAt: null — voided sales were still returning receipts
-  // FIX 1: Added RATE.READ
   app.get('/:saleId', {
     config:     RATE.READ,
     preHandler: [authorize(
@@ -25,8 +20,6 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
     const sale = await prisma.sale.findFirst({
       where: {
         id:        saleId,
-        // FIX 10: Exclude voided/reversed sales — a reversed sale is no
-        // longer valid and should not generate a printable receipt.
         deletedAt: null,
       },
       include: {
@@ -46,9 +39,8 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
       select: { username: true },
     })
 
-    // FIX 1: Channel scoping — non-admin roles may only retrieve receipts
-    // for sales from their own channel
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
+    // Channel scoping
+    if (!['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
       if (sale.channelId !== request.user.channelId) {
         return reply.status(403).send({
           error:   'Forbidden',
@@ -76,8 +68,9 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
         total:    Number(sale.netAmount),
       },
       payments: sale.payments.map(p => ({
-        method: p.method,
-        amount: Number(p.amount),
+        method:    p.method,
+        amount:    Number(p.amount),
+        reference: p.reference,
       })),
       cashier: cashierUser?.username,
       vatPIN:  (sale.channel.settings as any)?.find((s: any) => s.key === 'bizSettings')?.value?.vatNumber,
@@ -86,7 +79,6 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
   })
 
   // GET /receipts/public/:saleId (No authentication required)
-  // Audit finding: Permanent Digital Receipt Links
   app.get('/public/:saleId', {
     config: {
       rateLimit: {
@@ -113,7 +105,6 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
       select: { username: true },
     })
 
-    // Sanitize: No PII besides name if public
     return {
       receiptNo: sale.receiptNo,
       channel:   {
@@ -134,8 +125,9 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
         total:    Number(sale.netAmount),
       },
       payments: sale.payments.map(p => ({
-        method: p.method,
-        amount: Number(p.amount),
+        method:    p.method,
+        amount:    Number(p.amount),
+        reference: p.reference,
       })),
       cashier: cashierUser?.username,
       date:    sale.createdAt,
