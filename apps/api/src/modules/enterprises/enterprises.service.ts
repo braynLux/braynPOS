@@ -475,8 +475,8 @@ export class EnterpriseService {
         },
         orderBy: { createdAt: 'desc' },
       }),
-      prisma.channel.count({ where: { deletedAt: null } }),
-      prisma.user.count({ where: { deletedAt: null } }),
+      prisma.channel.count({ where: { enterpriseId: { not: null }, deletedAt: null } }),
+      prisma.user.count({ where: { enterpriseId: { not: null }, deletedAt: null } }),
       prisma.enterprise.findMany({
         where: { deletedAt: null },
         select: { id: true, name: true, slug: true, plan: true, createdAt: true },

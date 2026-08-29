@@ -155,6 +155,72 @@ async function ensureDatabaseSchema() {
       );
     `).catch(() => {})
 
+    // 5. Ensure LUX Prototype enterprise exists and claims any unmapped existing data
+    let prototype = await basePrisma.enterprise.findUnique({ where: { slug: 'prototype' } })
+    if (!prototype) {
+      prototype = await basePrisma.enterprise.create({
+        data: {
+          name: 'LUX Prototype',
+          slug: 'prototype',
+          email: 'prototype@brayn.app',
+          phone: '+254700000000',
+          plan: 'ENTERPRISE',
+          isActive: true,
+        },
+      })
+      console.log('✅ [BOOT] LUX Prototype enterprise provisioned successfully.')
+    }
+
+    // Link any orphaned existing channels, items, and audit logs to LUX Prototype
+    await basePrisma.channel.updateMany({
+      where: { enterpriseId: null },
+      data: { enterpriseId: prototype.id },
+    })
+
+    await basePrisma.item.updateMany({
+      where: { enterpriseId: null },
+      data: { enterpriseId: prototype.id },
+    })
+
+    await basePrisma.auditLog.updateMany({
+      where: { enterpriseId: null },
+      data: { enterpriseId: prototype.id },
+    })
+
+    // Ensure default Super Admin account for LUX Prototype
+    const hqChannel = await basePrisma.channel.findFirst({ where: { enterpriseId: prototype.id } })
+    const superAdminPassword = process.env.DEFAULT_SUPERADMIN_PASSWORD || 'Admin@Brayn2026!'
+    const { hashPassword } = await import('./lib/password.js')
+    const superAdminHash = await hashPassword(superAdminPassword)
+
+    const existingSuperAdmin = await basePrisma.user.findFirst({
+      where: { OR: [{ username: 'superadmin.prototype' }, { email: 'superadmin@prototype.brayn.app' }] },
+    })
+
+    if (!existingSuperAdmin) {
+      await basePrisma.user.create({
+        data: {
+          enterpriseId: prototype.id,
+          channelId: hqChannel?.id || null,
+          username: 'superadmin.prototype',
+          email: 'superadmin@prototype.brayn.app',
+          passwordHash: superAdminHash,
+          role: 'SUPER_ADMIN',
+          status: 'ACTIVE',
+        },
+      })
+      console.log('✅ [BOOT] superadmin.prototype user provisioned.')
+    } else {
+      await basePrisma.user.update({
+        where: { id: existingSuperAdmin.id },
+        data: {
+          enterpriseId: prototype.id,
+          role: 'SUPER_ADMIN',
+          status: 'ACTIVE',
+        },
+      })
+    }
+
     console.log('✅ [BOOT] Database schema verified & up to date.')
   } catch (err: any) {
     console.error('⚠️ [BOOT] Database schema verification error:', err?.message || err)
