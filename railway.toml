@@ -3,7 +3,7 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-preDeployCommand = "sh -c 'pnpm --filter api exec prisma migrate deploy'"
+preDeployCommand = "sh -c 'export DIRECT_URL=${DIRECT_URL:-$DATABASE_URL}; pnpm --filter api exec prisma migrate deploy'"
 healthcheckPath = "/health"
 healthcheckTimeout = 120
 restartPolicyType = "on_failure"
