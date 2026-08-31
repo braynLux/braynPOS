@@ -67,7 +67,7 @@ export default function POSPage() {
   const [serialPickerItem, setSerialPickerItem] = useState<ItemResult | null>(null)
   const [lastSaleId, setLastSaleId] = useState<string | null>(null)
   const [showScanner, setShowScanner] = useState(false)
-  const [selectedCustomerDetails, setSelectedCustomerDetails] = useState<{ id: string; loyaltyPoints: number } | null>(null)
+  const [selectedCustomerDetails, setSelectedCustomerDetails] = useState<{ id: string; loyaltyPoints: number; creditLimit?: number; outstandingCredit?: number } | null>(null)
   const [activeSession, setActiveSession] = useState<{ id: string; status: 'OPEN' } | null>(null)
   const [sessionLoading, setSessionLoading] = useState(true)
 
@@ -207,20 +207,46 @@ export default function POSPage() {
     setSerialPickerItem(null)
   }
 
+  const getMinAllowedPrice = (item: { retailPrice?: number; wholesalePrice?: number; originalPrice?: number; minRetailPrice?: number; minWholesalePrice?: number }) => {
+    if (saleType === 'WHOLESALE') {
+      return Number(item.wholesalePrice || item.originalPrice || 0)
+    }
+    return Number(item.retailPrice || item.originalPrice || 0)
+  }
+
   const handleCommitSale = async (tokenOverride?: string) => {
     if (cart.length === 0) return
 
-    if (role === 'CASHIER' || role === 'PROMOTER' || role === 'SALES_PERSON') {
-      const belowMin = cart.find(c => c.unitPrice < c.minRetailPrice)
-      if (belowMin && !tokenOverride && !approvalToken) {
-        setApprovalTarget({ action: 'price_below_min', contextId: belowMin.itemId })
-        return
-      }
+    // ── Floor Price & Margin Validation ──
+    const belowMinItem = cart.find(c => {
+      const minAllowed = getMinAllowedPrice(c)
+      return minAllowed > 0 && c.unitPrice < minAllowed
+    })
+
+    if (belowMinItem && !tokenOverride && !approvalToken) {
+      toast.error(`Price for ${belowMinItem.name} (KES ${belowMinItem.unitPrice.toLocaleString()}) is below ${saleType.toLowerCase()} price (KES ${getMinAllowedPrice(belowMinItem).toLocaleString()})! Manager PIN required.`, { id: 'pos-below-floor', duration: 4000 })
+      setApprovalTarget({ action: 'price_below_min', contextId: belowMinItem.itemId })
+      return
     }
 
-    if (paymentMethod === 'CREDIT' && !customerId) {
-      toast.error('Credit sales require a customer. Please select a customer.')
-      return
+    if (paymentMethod === 'CREDIT') {
+      if (!customerId) {
+        toast.error('Credit sales require a customer. Please select a customer.')
+        return
+      }
+      if (selectedCustomerDetails) {
+        const creditLimit = Number(selectedCustomerDetails.creditLimit ?? 0)
+        const currentOutstanding = Number(selectedCustomerDetails.outstandingCredit ?? 0)
+        const saleTotal = getTotal()
+        if (creditLimit > 0 && (currentOutstanding + saleTotal) > creditLimit && !tokenOverride && !approvalToken) {
+          const isManager = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user?.role || '')
+          if (!isManager) {
+            toast.error(`Credit limit of KES ${creditLimit.toLocaleString()} exceeded for ${customerName}!`, { id: 'credit-limit-exceeded' })
+            setApprovalTarget({ action: 'credit_limit_exceeded', contextId: customerId })
+            return
+          }
+        }
+      }
     }
 
     setCommitting(true)
@@ -274,7 +300,7 @@ export default function POSPage() {
   const change = Number(amountTendered) - getTotal()
   const itemCount = getItemCount()
   const hasFloorViolation = cart.some(item =>
-    item.unitPrice < (saleType === 'WHOLESALE' ? item.minWholesalePrice : item.minRetailPrice)
+    item.unitPrice < getMinAllowedPrice(item)
   )
 
   // ── Cart Panel (shared between desktop right column and mobile cart tab) ──
@@ -344,7 +370,7 @@ export default function POSPage() {
                         <input
                           type="number"
                           inputMode="decimal"
-                          className={`input pos-price-input ${statusClass} ${item.unitPrice < (saleType === 'WHOLESALE' ? item.minWholesalePrice : item.minRetailPrice) ? 'input-error' : ''}`}
+                          className={`input pos-price-input ${statusClass} ${item.unitPrice < getMinAllowedPrice(item) ? 'input-error' : ''}`}
                           value={item.unitPrice || ''}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => updatePrice(item.itemId, Number(e.target.value), item.serialId)}
@@ -361,13 +387,17 @@ export default function POSPage() {
                   })()}
                 </div>
 
-                {item.unitPrice < (saleType === 'WHOLESALE' ? item.minWholesalePrice : item.minRetailPrice) && (
-                  <div className="pos-floor-warning">
-                    ⚠️ Below floor: {new Intl.NumberFormat('en-KE').format(
-                      saleType === 'WHOLESALE' ? item.minWholesalePrice : item.minRetailPrice
-                    )}
-                  </div>
-                )}
+                {(() => {
+                  const minAllowed = getMinAllowedPrice(item)
+                  if (minAllowed > 0 && item.unitPrice < minAllowed) {
+                    return (
+                      <div className="pos-floor-warning" style={{ color: 'var(--danger)', fontSize: '0.75rem', fontWeight: 700, marginTop: 4 }}>
+                        ⚠️ Below {saleType.toLowerCase()} price: {new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(minAllowed)}
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, marginLeft: 12 }}>
@@ -402,7 +432,18 @@ export default function POSPage() {
         </div>
         <button
           className="btn btn-success btn-lg pos-checkout-btn"
-          onClick={() => setMobileTab('payment')}
+          onClick={() => {
+            const belowMinItem = cart.find(c => {
+              const minAllowed = getMinAllowedPrice(c)
+              return minAllowed > 0 && c.unitPrice < minAllowed
+            })
+            if (belowMinItem && !approvalToken) {
+              toast.error(`Price for ${belowMinItem.name} (KES ${belowMinItem.unitPrice.toLocaleString()}) is below ${saleType.toLowerCase()} price (KES ${getMinAllowedPrice(belowMinItem).toLocaleString()})! Manager PIN required.`, { id: 'pos-below-floor', duration: 4000 })
+              setApprovalTarget({ action: 'price_below_min', contextId: belowMinItem.itemId })
+              return
+            }
+            setMobileTab('payment')
+          }}
           disabled={cart.length === 0 || (requiresSession && !activeSession)}
           id="pos-checkout"
         >

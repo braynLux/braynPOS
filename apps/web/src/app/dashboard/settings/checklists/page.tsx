@@ -196,8 +196,28 @@ export default function ChecklistDesignerPage() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 24, marginTop: 24 }}>
           {checklists.length === 0 ? (
-            <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>
-              No service checklists defined. Create one to enable specialized intake flows.
+            <div style={{
+              gridColumn: '1/-1',
+              textAlign: 'center',
+              padding: '60px 24px',
+              background: 'var(--bg-card)',
+              borderRadius: 'var(--radius-lg)',
+              border: '1px dashed var(--border)',
+              boxShadow: 'var(--shadow-sm)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 12,
+            }}>
+              <span style={{ fontSize: '2.5rem' }}>📋</span>
+              <h3 style={{ margin: 0, fontWeight: 700, color: 'var(--text-primary)' }}>No Service Checklists Defined</h3>
+              <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.9rem', maxWidth: 460 }}>
+                Create custom intake forms for repairs, vehicle inspections, or equipment diagnostic workflows.
+              </p>
+              <button className="btn btn-primary btn-sm" onClick={() => setShowAdd(true)} style={{ marginTop: 8 }}>
+                + Create First Checklist
+              </button>
             </div>
           ) : (
             checklists.map(c => (

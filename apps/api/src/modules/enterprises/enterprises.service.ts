@@ -142,13 +142,18 @@ export class EnterpriseService {
 
     // 3. Atomic Provisioning & Invite Redemption
     const result = await prisma.$transaction(async (tx) => {
+      const trialEndsAt = new Date()
+      trialEndsAt.setDate(trialEndsAt.getDate() + 14)
+
       const enterprise = await tx.enterprise.create({
         data: {
-          name:  input.name.trim(),
+          name:          input.name.trim(),
           slug,
-          email: input.email.toLowerCase().trim(),
-          phone: input.phone,
-          plan:  invite.plan || 'STARTER',
+          email:         input.email.toLowerCase().trim(),
+          phone:         input.phone,
+          plan:          invite.plan || 'STARTER',
+          billingStatus: 'TRIAL',
+          trialEndsAt,
         },
       })
 
@@ -452,13 +457,17 @@ export class EnterpriseService {
 
     const updated = await prisma.enterprise.update({
       where: { id },
-      data:  { plan: input.plan },
+      data:  {
+        plan: input.plan,
+        ...(input.planFeatures !== undefined ? { planFeatures: input.planFeatures } : {}),
+      },
     })
 
     return {
-      message:  `Plan updated to ${input.plan}`,
-      previous: enterprise.plan,
-      current:  updated.plan,
+      message:      `Plan updated to ${input.plan}`,
+      previous:     enterprise.plan,
+      current:      updated.plan,
+      planFeatures: updated.planFeatures,
     }
   }
 

@@ -5,6 +5,7 @@ import { api } from '@/lib/api-client'
 import { useAuthStore } from '@/stores/auth.store'
 import { PasswordConfirmModal } from '@/components/shared/PasswordConfirmModal'
 import { PhoneInput } from '@/components/shared/PhoneInput'
+import toast from 'react-hot-toast'
 
 interface Channel { id: string; name: string; code: string; type: string; isMainWarehouse: boolean; address?: string; phone?: string }
 
@@ -34,25 +35,36 @@ export default function ChannelsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.name || !form.code) return setError('Name and Code are required')
+    if (!form.name.trim() || !form.code.trim()) {
+      setError('Channel Name and Code are required')
+      toast.error('Channel Name and Code are required')
+      return
+    }
     setSaving(true)
     setError('')
     try {
       const payload = {
-        name: form.name, code: form.code, type: form.type,
+        name: form.name.trim(),
+        code: form.code.trim().toUpperCase(),
+        type: form.type,
         isMainWarehouse: form.isMainWarehouse,
-        ...(form.address && { address: form.address }),
-        ...(form.phone && { phone: form.phone }),
+        address: form.address.trim() || undefined,
+        phone: form.phone.trim() || undefined,
       }
       await api.post('/channels', payload, token!)
+      toast.success(`Channel "${form.name}" created successfully!`)
       setShowModal(false)
       setForm({ name: '', code: '', type: 'RETAIL_SHOP', address: '', phone: '', isMainWarehouse: false })
-      fetchChannels()
+      await fetchChannels()
     } catch (err: any) {
-      const requestId = err.approvalId ? ` Request ID: ${err.approvalId}` : ''
-      setError(`${err.message || 'Failed to create channel.'}${requestId}`)
+      const msg = err.message || err.error || 'Failed to create channel.'
+      const requestId = err.approvalId ? ` (Approval Request ID: ${err.approvalId})` : ''
+      const fullMsg = `${msg}${requestId}`
+      setError(fullMsg)
+      toast.error(fullMsg, { duration: 5000 })
+    } finally {
+      setSaving(false)
     }
-    finally { setSaving(false) }
   }
 
   const handleDelete = async (password: string) => {
@@ -148,7 +160,7 @@ export default function ChannelsPage() {
                 <input className="input" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="Physical address" />
               </div>
               <PhoneInput 
-                label="Phone *" 
+                label="Phone" 
                 value={form.phone} 
                 onChange={val => setForm({ ...form, phone: val })} 
               />

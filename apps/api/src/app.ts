@@ -353,8 +353,11 @@ export async function buildApp() {
     const { aiRoutes } = await import('./modules/ai/ai.routes.js')
     await v1.register(aiRoutes, { prefix: '/ai' })
 
-    const { notificationRoutes } = await import('./modules/notifications/notifications.routes.js')
-    await v1.register(notificationRoutes, { prefix: '/notifications' })
+    const { systemNotificationsRoutes } = await import('./modules/notifications/notifications.routes.js')
+    await v1.register(systemNotificationsRoutes, { prefix: '/notifications' })
+
+    const { planConfigRoutes } = await import('./modules/plans/plans.routes.js')
+    await v1.register(planConfigRoutes, { prefix: '/plans' })
 
     const { auditRoutes } = await import('./modules/audit/audit.routes.js')
     await v1.register(auditRoutes, { prefix: '/audit' })

@@ -97,7 +97,7 @@ export default function ItemsPage() {
     if (brandId) q.append('brandId', brandId)
     if (supplierId) q.append('supplierId', supplierId)
     
-    const canFilterChannel = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
+    const canFilterChannel = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'PLATFORM_OWNER'].includes(user?.role || '')
     if (canFilterChannel) {
       if (channelId) q.append('channelId', channelId)
     } else {
@@ -154,7 +154,7 @@ export default function ItemsPage() {
     fetchCategories()
     fetchBrands()
     fetchSuppliers()
-    if (['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'STOREKEEPER'].includes(user?.role || '')) {
+    if (['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'STOREKEEPER', 'PLATFORM_OWNER'].includes(user?.role || '')) {
       fetchChannels()
     }
   }, [token, user?.role])
@@ -276,7 +276,7 @@ export default function ItemsPage() {
             headers={['SKU', 'Name', 'Category', 'Brand', 'Supplier', 'Stock Quantity', 'Retail Price', 'Wholesale Price', 'Status']}
             getData={getExportData}
           />
-           {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(user?.role || '') && (
+           {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user?.role || '') && (
             <>
               {selectedIds.length > 0 && (
                 <button className="btn btn-secondary" onClick={handleBatchAIGenerate} disabled={isGeneratingBatch}>
@@ -337,7 +337,7 @@ export default function ItemsPage() {
           ))}
         </select>
 
-        {['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '') && (
+        {['SUPER_ADMIN', 'MANAGER_ADMIN', 'PLATFORM_OWNER'].includes(user?.role || '') && (
           <select
             className="input"
             value={channelId}
@@ -414,7 +414,7 @@ export default function ItemsPage() {
                     </span>
                   </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(user?.role || '') && (
+                      {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user?.role || '') && (
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={() => router.push(`/dashboard/items/${item.id}/edit`)}
@@ -432,7 +432,7 @@ export default function ItemsPage() {
                           title="Opening Stock"
                         >📥</button>
                       )}
-                      {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(user?.role || '') && (
+                      {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user?.role || '') && (
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={() => handleToggleActive(item)}
@@ -440,7 +440,7 @@ export default function ItemsPage() {
                           style={{ marginRight: 4 }}
                         >{item.isActive ? '🔴' : '🟢'}</button>
                       )}
-                      {['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER'].includes(user?.role || '') && (
+                      {['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user?.role || '') && (
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={() => handleDelete(item)}

@@ -32,7 +32,7 @@ export const paymentsRoutes: FastifyPluginAsync = async (app) => {
     // GET /payments?saleId=xxx
     protectedRoutes.get('/', {
       config: RATE.READ,
-      preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+      preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
     }, async (request) => {
       const { saleId } = z.object({ saleId: z.string().uuid() }).parse(request.query)
 
@@ -44,7 +44,7 @@ export const paymentsRoutes: FastifyPluginAsync = async (app) => {
       if (!sale) return [] // If it truly doesn't exist, return empty list
 
       // Isolation check
-      if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
+      if (!['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
         if (sale.channelId !== request.user.channelId) {
           throw { statusCode: 403, message: 'Access denied: Sale belongs to another channel' }
         }

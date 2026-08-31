@@ -2,18 +2,20 @@ import type { FastifyPluginAsync } from 'fastify'
 import { assetsService } from './assets.service.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { RATE } from '../../lib/rate-limit.plugin.js'
 import { z } from 'zod'
 
-const HQ_ASSET_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_ASSET_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const assetsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requirePlanFeature('fixedAssets'))
 
   // GET /accounting/assets
   app.get('/', {
     config: RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { channelId } = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
     const isHQ = HQ_ASSET_ROLES.includes(request.user.role)
@@ -26,7 +28,7 @@ export const assetsRoutes: FastifyPluginAsync = async (app) => {
   // POST /accounting/assets
   app.post('/', {
     config: RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const schema = z.object({
       name: z.string().trim().min(1).max(120),

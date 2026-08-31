@@ -73,7 +73,7 @@ export class ItemsService {
     const isGlobal = !query.channelId || query.channelId === ''
 
     const [data, total] = await Promise.all([
-      basePrisma.item.findMany({
+      prisma.item.findMany({
         where, skip, take: limit,
         orderBy: orderBy as any,
         include: {
@@ -85,7 +85,7 @@ export class ItemsService {
             : { where: { channelId: query.channelId }, take: 1 },
         } as any,
       }),
-      basePrisma.item.count({ where }),
+      prisma.item.count({ where }),
     ])
 
     const formattedData = data.map(item => {
@@ -147,8 +147,8 @@ export class ItemsService {
     return prisma.item.findFirst({ where: { barcode, deletedAt: null } })
   }
 
-  async create(data: CreateItemInput & { creatorChannelId?: string; creatorId?: string }) {
-    const { creatorChannelId, creatorId, ...itemData } = data
+  async create(data: CreateItemInput & { creatorChannelId?: string; creatorId?: string; enterpriseId?: string | null }) {
+    const { creatorChannelId, creatorId, enterpriseId, ...itemData } = data
 
     // FIX 12: Use cryptographically random suffix — Math.random() exhausts
     // easily under bulk imports with concurrent requests.
@@ -168,10 +168,11 @@ export class ItemsService {
           data: {
             ...itemData,
             sku,
+            enterpriseId:      enterpriseId ?? undefined,
             retailPrice:       itemData.retailPrice,
-            wholesalePrice:    itemData.wholesalePrice    ?? itemData.retailPrice,
-            minRetailPrice:    itemData.minRetailPrice    ?? itemData.retailPrice,
-            minWholesalePrice: itemData.minWholesalePrice ?? itemData.wholesalePrice ?? itemData.retailPrice,
+            wholesalePrice:    (itemData.wholesalePrice && Number(itemData.wholesalePrice) > 0) ? itemData.wholesalePrice : itemData.retailPrice,
+            minRetailPrice:    (itemData.minRetailPrice && Number(itemData.minRetailPrice) > 0) ? itemData.minRetailPrice : itemData.retailPrice,
+            minWholesalePrice: (itemData.minWholesalePrice && Number(itemData.minWholesalePrice) > 0) ? itemData.minWholesalePrice : (itemData.wholesalePrice ?? itemData.retailPrice),
             weightedAvgCost:   itemData.weightedAvgCost   ?? 0,
           },
         })
@@ -412,10 +413,12 @@ export class ItemsService {
     return { localCategoryId, localBrandId, localSupplierId }
   }
 
-  async findAllBrands(channelId?: string) {
+  async findAllBrands(channelId?: string, enterpriseId?: string) {
     const where: Prisma.BrandWhereInput = { deletedAt: null }
     if (channelId) {
       where.OR = [{ channelId }, { channelId: null }]
+    } else if (enterpriseId) {
+      where.channel = { enterpriseId, deletedAt: null }
     }
     const brands = await prisma.brand.findMany({
       where,
@@ -445,10 +448,12 @@ export class ItemsService {
     return prisma.brand.update({ where: { id }, data: { deletedAt: new Date() } })
   }
 
-  async findAllCategories(channelId?: string) {
+  async findAllCategories(channelId?: string, enterpriseId?: string) {
     const where: Prisma.CategoryWhereInput = { deletedAt: null }
     if (channelId) {
       where.OR = [{ channelId }, { channelId: null }]
+    } else if (enterpriseId) {
+      where.channel = { enterpriseId, deletedAt: null }
     }
     const categories = await prisma.category.findMany({
       where,
@@ -499,10 +504,12 @@ export class ItemsService {
     return prisma.category.update({ where: { id }, data: { deletedAt: new Date() } })
   }
 
-  async findAllSuppliers(channelId?: string) {
+  async findAllSuppliers(channelId?: string, enterpriseId?: string) {
     const where: Prisma.SupplierWhereInput = { deletedAt: null }
     if (channelId) {
       where.OR = [{ channelId }, { channelId: null }]
+    } else if (enterpriseId) {
+      where.channel = { enterpriseId, deletedAt: null }
     }
     const suppliers = await prisma.supplier.findMany({
       where,

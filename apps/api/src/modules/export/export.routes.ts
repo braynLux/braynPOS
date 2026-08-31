@@ -19,7 +19,7 @@ export const exportRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post('/sheets', {
     config: RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { title, headers, data } = exportPayloadSchema.parse(request.body)
 
@@ -37,7 +37,7 @@ export const exportRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post('/docs', {
     config: RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { title, headers, data } = exportPayloadSchema.parse(request.body)
 

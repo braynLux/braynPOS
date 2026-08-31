@@ -23,7 +23,7 @@ function resolveChannelId(
   channelId: string | null | undefined,
   queryCid:  string | undefined
 ): string {
-  const isGlobalRole = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(role)
+  const isGlobalRole = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(role)
 
   if (!isGlobalRole) {
     if (!channelId) {
@@ -42,9 +42,8 @@ function resolveChannelId(
 export const reportsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
-  // FIX 9: Added ADMIN to authorize() — it was in the channel scoping check
-  // but blocked at this hook, making that branch permanently dead code.
-  app.addHook('preHandler', authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER'))
+  // FIX 9: Added ADMIN and PLATFORM_OWNER to authorize()
+  app.addHook('preHandler', authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER'))
 
   // GET /reports/sales-summary
   app.get('/sales-summary', { config: RATE.READ }, async (request) => {
@@ -90,7 +89,7 @@ export const reportsRoutes: FastifyPluginAsync = async (app) => {
   // GET /reports/admin-dashboard — HQ only
   app.get('/admin-dashboard', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
     const q = z.object({
       startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
@@ -110,7 +109,7 @@ export const reportsRoutes: FastifyPluginAsync = async (app) => {
   // Audit finding: The "Loss-Leader" Audit Report
   app.get('/forensic-audit', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
     const q   = dateRangeSchema.parse(request.query)
     const cid = resolveChannelId(request.user.role, request.user.channelId, q.channelId)

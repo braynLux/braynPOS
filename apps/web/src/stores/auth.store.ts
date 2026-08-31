@@ -16,6 +16,7 @@ export interface User {
 interface AuthState {
   accessToken: string | null
   refreshToken: string | null
+  originalPlatformTokens: { accessToken: string; refreshToken: string; role?: string } | null
   user: User | null
   isAuthenticated: boolean
   isPlatformOwnerSwitched: boolean
@@ -35,6 +36,7 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       accessToken: null,
       refreshToken: null,
+      originalPlatformTokens: null,
       user: null,
       isAuthenticated: false,
       isPlatformOwnerSwitched: false,
@@ -42,6 +44,7 @@ export const useAuthStore = create<AuthState>()(
         set({
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
+          originalPlatformTokens: null,
           user,
           isAuthenticated: true,
           isPlatformOwnerSwitched: false,
@@ -56,9 +59,15 @@ export const useAuthStore = create<AuthState>()(
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
           isPlatformOwnerSwitched: true,
+          originalPlatformTokens: state.originalPlatformTokens || (state.accessToken && state.refreshToken ? {
+            accessToken: state.accessToken,
+            refreshToken: state.refreshToken,
+            role: state.user?.role,
+          } : null),
           user: state.user
             ? {
                 ...state.user,
+                role: state.user.role === 'PLATFORM_OWNER' ? 'MANAGER_ADMIN' : state.user.role,
                 enterpriseId: enterprise.id,
                 enterprise,
                 channelId: channel.id,
@@ -68,19 +77,24 @@ export const useAuthStore = create<AuthState>()(
         })),
       exitWorkspace: () =>
         set((state) => ({
+          accessToken: state.originalPlatformTokens?.accessToken || state.accessToken,
+          refreshToken: state.originalPlatformTokens?.refreshToken || state.refreshToken,
           isPlatformOwnerSwitched: false,
           user: state.user
             ? {
                 ...state.user,
+                role: state.originalPlatformTokens?.role || 'PLATFORM_OWNER',
                 enterpriseId: null,
                 enterprise: undefined,
               }
             : null,
+          originalPlatformTokens: null,
         })),
       logout: () =>
         set({
           accessToken: null,
           refreshToken: null,
+          originalPlatformTokens: null,
           user: null,
           isAuthenticated: false,
           isPlatformOwnerSwitched: false,

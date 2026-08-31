@@ -73,7 +73,7 @@ export class NotificationService {
   }
 
   static async markAsRead(id: string, actorRole: string, actorChannelId?: string | null) {
-    const notification = await basePrisma.notification.findUnique({
+    const notification = await prisma.notification.findUnique({
       where:  { id },
       select: { id: true, channelId: true },
     })
@@ -87,16 +87,16 @@ export class NotificationService {
       throw { statusCode: 404, message: 'Notification not found' }
     }
 
-    return basePrisma.notification.update({
+    return prisma.notification.update({
       where: { id },
       data:  { isRead: true },
     })
   }
 
-  static async getHistory(channelId?: string | null, page = 1, limit = 20) {
+  static async getHistory(channelId?: string | null, page = 1, limit = 20, enterpriseId?: string | null) {
      const skip = (page - 1) * limit
-     return basePrisma.notification.findMany({
-       where: channelId === undefined ? {} : { channelId },
+     return prisma.notification.findMany({
+       where: channelId ? { channelId } : enterpriseId ? { channel: { enterpriseId } } : {},
        orderBy: { createdAt: 'desc' },
        take: limit,
        skip,

@@ -24,72 +24,76 @@ export const rateLimitPlugin = fp(async (app: FastifyInstance) => {
   })
 })
 
+function extractClientKey(request: any, prefix: string): string {
+  const auth = request.headers?.authorization
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    // The last 32 characters represent the cryptographic signature, unique per token/user
+    return `${prefix}-token-${auth.slice(-32)}`
+  }
+  const user = request.user
+  if (user?.sub || user?.id) {
+    return `${prefix}-user-${user.sub || user.id}`
+  }
+  return `${prefix}-ip-${request.ip}`
+}
+
 export const RATE = {
   SALE_COMMIT: {
     rateLimit: {
-      max:        10,
-      timeWindow: '30 seconds',
-      keyGenerator: (request: any) => `sale-commit-${request.user?.id ?? request.ip}`,
+      max:        60,
+      timeWindow: '1 minute',
+      keyGenerator: (request: any) => extractClientKey(request, 'sale-commit'),
     },
   },
 
   OFFLINE_SYNC: {
     rateLimit: {
-      max:        30,
+      max:        60,
       timeWindow: '1 minute',
-      keyGenerator: (request: any) => `offline-${request.user?.id ?? request.ip}`,
+      keyGenerator: (request: any) => extractClientKey(request, 'offline-sync'),
     },
   },
 
   AUTH_LOGIN: {
     rateLimit: {
-      max:        5,
+      max:        10,
       timeWindow: '1 minute',
-      // Keyed on IP for pre-auth endpoints — no user identity yet
       keyGenerator: (request: any) => `auth-${request.ip}`,
     },
   },
 
   APPROVAL: {
     rateLimit: {
-      max:        5,
+      max:        10,
       timeWindow: '1 minute',
-      // FIX: Was missing keyGenerator — fell back to global IP-based key.
-      // Key by channelId + action so each specific approval type is
-      // independently rate-limited per channel, not shared across all
-      // approval types from the same IP.
       keyGenerator: (request: any) => {
         const body = request.body as any
-        return `approval-${body?.channelId ?? 'unknown'}-${body?.action ?? 'unknown'}-${request.ip}`
+        const clientKey = extractClientKey(request, 'approval')
+        return `${clientKey}-${body?.channelId ?? 'unknown'}-${body?.action ?? 'unknown'}`
       },
     },
   },
 
   READ: {
     rateLimit: {
-      max:        120,
+      max:        200,
       timeWindow: '1 minute',
-      // FIX: Was missing keyGenerator — fell back to IP.
-      // Behind NAT/proxies, all users share one IP and exhaust each
-      // other's quotas. Key by authenticated user ID when available.
-      keyGenerator: (request: any) => `read-${request.user?.id ?? request.ip}`,
+      keyGenerator: (request: any) => extractClientKey(request, 'read'),
     },
   },
 
-  // Rate limit config for stock endpoints (previously had none)
   STOCK_READ: {
     rateLimit: {
-      max:        100,
+      max:        150,
       timeWindow: '1 minute',
-      keyGenerator: (request: any) => `stock-${request.user?.id ?? request.ip}`,
+      keyGenerator: (request: any) => extractClientKey(request, 'stock'),
     },
   },
-  // Anti-Scraping for Digital Catalog
+
   PUBLIC_CATALOG: {
     rateLimit: {
-      max:        20,
+      max:        30,
       timeWindow: '1 minute',
-      // Strict IP-based limit for public access
       keyGenerator: (request: any) => `catalog-public-${request.ip}`,
     },
   },

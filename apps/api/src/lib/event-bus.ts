@@ -3,24 +3,24 @@ import { logger } from './logger.js'
 
 // ── Domain Event Types ────────────────────────────────────────────────
 export interface DomainEvents {
-  'sale.committed':          { saleId: string; channelId: string; totalAmount: number }
-  'purchase.committed':      { purchaseId: string; channelId: string }
-  'transfer.sent':           { transferId: string; fromChannelId: string; toChannelId: string }
-  'transfer.received':       { transferId: string; toChannelId: string }
-  'transfer.disputed':       { transferId: string; toChannelId: string }
-  'expense.created':         { expenseId: string; channelId: string; amount: number }
-  'stock.low':               { itemId: string; channelId: string; currentQty: number; reorderLevel: number }
-  'stock.negative':          { itemId: string; channelId: string; currentQty: number }
-  'session.opened':          { sessionId: string; channelId: string; userId: string }
-  'session.closed':          { sessionId: string; channelId: string }
-  'payroll.finalized':       { salaryRunId: string }
-  'credit.payment.received': { customerId: string; amount: number }
-  'ticket.created':          { ticketId: string; subject: string; category: string; priority: string; refCode: string }
-  'stock.adjustment':        { itemId: string; quantityChange: number; reason: string; ticketId?: string }
-  'approval.requested':      { approvalId: string; requesterId: string; channelId: string | null; action: string; notes?: string | null }
-  'inventory.updated':       { itemId: string; channelId: string; availableQty: number; movementType: string }
-  'sale.zero_cost':          { receiptNo: string; itemSku: string; channelId: string }
-  'transfer.zero_cost':      { itemSku: string; fromChannelId: string; toChannelId: string }
+  'sale.committed':          { saleId: string; channelId: string; totalAmount: number; enterpriseId?: string }
+  'purchase.committed':      { purchaseId: string; channelId: string; enterpriseId?: string }
+  'transfer.sent':           { transferId: string; fromChannelId: string; toChannelId: string; enterpriseId?: string }
+  'transfer.received':       { transferId: string; toChannelId: string; enterpriseId?: string }
+  'transfer.disputed':       { transferId: string; toChannelId: string; enterpriseId?: string }
+  'expense.created':         { expenseId: string; channelId: string; amount: number; enterpriseId?: string }
+  'stock.low':               { itemId: string; channelId: string; currentQty: number; reorderLevel: number; enterpriseId?: string }
+  'stock.negative':          { itemId: string; channelId: string; currentQty: number; enterpriseId?: string }
+  'session.opened':          { sessionId: string; channelId: string; userId: string; enterpriseId?: string }
+  'session.closed':          { sessionId: string; channelId: string; enterpriseId?: string }
+  'payroll.finalized':       { salaryRunId: string; enterpriseId?: string }
+  'credit.payment.received': { customerId: string; amount: number; enterpriseId?: string }
+  'ticket.created':          { ticketId: string; subject: string; category: string; priority: string; refCode: string; enterpriseId?: string }
+  'stock.adjustment':        { itemId: string; quantityChange: number; reason: string; ticketId?: string; enterpriseId?: string }
+  'approval.requested':      { approvalId: string; requesterId: string; channelId: string | null; action: string; notes?: string | null; enterpriseId?: string }
+  'inventory.updated':       { itemId: string; channelId: string; availableQty: number; movementType: string; enterpriseId?: string }
+  'sale.zero_cost':          { receiptNo: string; itemSku: string; channelId: string; enterpriseId?: string }
+  'transfer.zero_cost':      { itemSku: string; fromChannelId: string; toChannelId: string; enterpriseId?: string }
 }
 
 class TypedEventBus {

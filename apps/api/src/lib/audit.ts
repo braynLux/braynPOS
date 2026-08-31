@@ -1,9 +1,10 @@
-﻿// apps/api/src/lib/audit.ts
+// apps/api/src/lib/audit.ts
 // NEVER await this in the main transaction path.
 // Call it AFTER commit as a background fire-and-forget.
 
 import { prisma } from './prisma.js'
 import { logger }  from './logger.js'
+import { requestContext } from './request-context.plugin.js'
 
 interface AuditPayload {
   action:        string
@@ -20,8 +21,15 @@ interface AuditPayload {
 }
 
 export function logAction(payload: AuditPayload): void {
+  const store = requestContext.getStore()
+  const enterpriseId = payload.enterpriseId ?? store?.enterpriseId
   // Fire-and-forget — intentionally NOT awaited
-  prisma.auditLog.create({ data: payload }).catch((err: any) => {
+  prisma.auditLog.create({
+    data: {
+      ...payload,
+      ...(enterpriseId && { enterpriseId }),
+    }
+  }).catch((err: any) => {
     // FIX: Use structured logger instead of console.error so audit
     // failures appear in the log aggregator with full context
     logger.error({ err, payload }, '[audit] Failed to write audit log')

@@ -2,18 +2,20 @@ import type { FastifyPluginAsync } from 'fastify'
 import { transfersService } from './transfers.service.js'
 import { authenticate }     from '../../middleware/authenticate.js'
 import { authorize }        from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { RATE }             from '../../lib/rate-limit.plugin.js'
 import { z }                from 'zod'
 
-const HQ_TRANSFER_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_TRANSFER_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const transfersRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requirePlanFeature('transfers'))
 
   // GET /transfers
   app.get('/', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional(),
@@ -31,13 +33,16 @@ export const transfersRoutes: FastifyPluginAsync = async (app) => {
       query.channelId = request.user.channelId
     }
 
-    return transfersService.findAll(query)
+    return transfersService.findAll({
+      ...query,
+      enterpriseId: request.user.enterpriseId ?? undefined,
+    })
   })
 
   // GET /transfers/:id
   app.get('/:id', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request, reply) => {
     const { id }   = z.object({ id: z.string().uuid() }).parse(request.params)
     const transfer = await transfersService.findById(id)
@@ -57,7 +62,7 @@ export const transfersRoutes: FastifyPluginAsync = async (app) => {
   // POST /transfers
   app.post('/', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request, reply) => {
     const body = z.object({
       fromChannelId: z.string().uuid(),
@@ -92,7 +97,7 @@ export const transfersRoutes: FastifyPluginAsync = async (app) => {
   // POST /transfers/:id/receive
   app.post('/:id/receive', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const body   = z.object({
@@ -117,7 +122,7 @@ export const transfersRoutes: FastifyPluginAsync = async (app) => {
   // POST /transfers/:id/cancel
   app.post('/:id/cancel', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const transfer = await transfersService.findById(id)

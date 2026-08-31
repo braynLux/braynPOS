@@ -49,11 +49,35 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
       'CASHIER', 'SALES_PERSON', 'STOREKEEPER',
     )],
   }, async (request) => {
-    const isHQ               = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
+    const isHQ               = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)
     if (!isHQ && !request.user.channelId) {
       throw { statusCode: 400, message: 'Your account has no channel assigned' }
     }
     const effectiveChannelId = isHQ ? undefined : (request.user.channelId || undefined)
+    const enterpriseId       = request.user.enterpriseId
+
+    // ── Enterprise SQL Scopes ──────────────────────────────────────
+    const channelScopeSql = effectiveChannelId
+      ? Prisma.sql`AND "channelId" = ${effectiveChannelId}`
+      : enterpriseId
+      ? Prisma.sql`AND "channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
+      : Prisma.empty
+
+    const channelScopeSalesSql = effectiveChannelId
+      ? Prisma.sql`AND s."channelId" = ${effectiveChannelId}`
+      : enterpriseId
+      ? Prisma.sql`AND s."channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
+      : Prisma.empty
+
+    const itemScopeSql = enterpriseId
+      ? Prisma.sql`AND i."enterpriseId" = ${enterpriseId}`
+      : Prisma.empty
+
+    const transferScopeSql = effectiveChannelId
+      ? Prisma.sql`AND ("fromChannelId" = ${effectiveChannelId} OR "toChannelId" = ${effectiveChannelId})`
+      : enterpriseId
+      ? Prisma.sql`AND ("fromChannelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId}) OR "toChannelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId}))`
+      : Prisma.empty
 
     // FIX: Use EAT (UTC+3) start-of-day to ensure sales made after midnight show up correctly
     const now     = new Date()
@@ -79,20 +103,23 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         FROM sales
         WHERE "deletedAt" IS NULL
           AND "createdAt" >= ${today}
-          ${effectiveChannelId
-            ? Prisma.sql`AND "channelId" = ${effectiveChannelId}`
-            : Prisma.empty}
+          ${channelScopeSql}
       `,
       // Expenses
       prisma.expense.aggregate({
         where: {
           createdAt: { gte: today },
-          ...(effectiveChannelId && { channelId: effectiveChannelId }),
+          ...(effectiveChannelId ? { channelId: effectiveChannelId } : enterpriseId ? { channel: { enterpriseId } } : {}),
         },
         _sum: { amount: true },
       }),
       // Active Channels
-      prisma.channel.count({ where: { deletedAt: null } }),
+      prisma.channel.count({
+        where: {
+          deletedAt: null,
+          ...(enterpriseId ? { enterpriseId } : {}),
+        },
+      }),
 
       prisma.$queryRaw<Array<{ count: number }>>`
         SELECT COUNT(*)::int AS count
@@ -101,6 +128,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
           FROM items i
           LEFT JOIN inventory_balances ib ON ib."itemId" = i.id
           WHERE i."deletedAt" IS NULL AND i."isActive" = true
+          ${itemScopeSql}
           ${effectiveChannelId 
             ? Prisma.sql`AND ib."channelId" = ${effectiveChannelId}` 
             : Prisma.empty}
@@ -116,6 +144,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
           FROM items i
           LEFT JOIN inventory_balances ib ON ib."itemId" = i.id
           WHERE i."deletedAt" IS NULL AND i."isActive" = true
+          ${itemScopeSql}
           ${effectiveChannelId 
             ? Prisma.sql`AND ib."channelId" = ${effectiveChannelId}` 
             : Prisma.empty}
@@ -129,9 +158,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         SELECT COUNT(*)::int AS count
         FROM transfers
         WHERE status IN ('SENT', 'AWAITING_RECEIVER')
-          ${effectiveChannelId
-            ? Prisma.sql`AND ("fromChannelId" = ${effectiveChannelId} OR "toChannelId" = ${effectiveChannelId})`
-            : Prisma.empty}
+          ${transferScopeSql}
       `,
 
       prisma.$queryRaw<Array<{
@@ -153,9 +180,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         LEFT   JOIN customers cu ON cu.id = s."customerId"
         WHERE  s."deletedAt" IS NULL
           AND  s."createdAt" >= ${today}
-          ${effectiveChannelId
-            ? Prisma.sql`AND s."channelId" = ${effectiveChannelId}`
-            : Prisma.empty}
+          ${channelScopeSalesSql}
         ORDER  BY s."createdAt" DESC
         LIMIT  5
       `,
@@ -166,9 +191,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         JOIN   sales s ON s.id = si."saleId"
         WHERE  s."deletedAt" IS NULL
           AND  s."createdAt" >= ${today}
-          ${effectiveChannelId
-            ? Prisma.sql`AND s."channelId" = ${effectiveChannelId}`
-            : Prisma.empty}
+          ${channelScopeSalesSql}
       `,
       // Itemized low-stock alert (worst-first, capped)
       prisma.$queryRaw<Array<{
@@ -180,6 +203,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
         FROM   items i
         LEFT   JOIN inventory_balances ib ON ib."itemId" = i.id
         WHERE  i."deletedAt" IS NULL AND i."isActive" = true
+          ${itemScopeSql}
           ${effectiveChannelId
             ? Prisma.sql`AND ib."channelId" = ${effectiveChannelId}`
             : Prisma.empty}
@@ -233,7 +257,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // PATCH /dashboard/settings
   app.patch('/settings', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
     schema:     { body: { type: 'object' } },
   }, async (request) => {
     const body = request.body as Record<string, any>
@@ -251,7 +275,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // GET /dashboard/health
   app.get('/health', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
     return diagnosticsService.runFullDiagnostic(request.user.channelId ?? undefined)
   })
@@ -259,7 +283,7 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   // POST /dashboard/settings/printers/test
   app.post('/settings/printers/test', {
     config: RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { host, port } = printerTestSchema.parse(request.body)
 

@@ -95,6 +95,14 @@ async function ensureDatabaseSchema() {
     await basePrisma.$executeRawUnsafe(`ALTER TABLE "items" ADD COLUMN IF NOT EXISTS "enterpriseId" TEXT;`).catch(() => {})
     await basePrisma.$executeRawUnsafe(`ALTER TABLE "audit_logs" ADD COLUMN IF NOT EXISTS "enterpriseId" TEXT;`).catch(() => {})
 
+    // Subscription & Trial columns on enterprises
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "enterprises" ADD COLUMN IF NOT EXISTS "billingStatus" TEXT NOT NULL DEFAULT 'TRIAL';`).catch(() => {})
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "enterprises" ADD COLUMN IF NOT EXISTS "trialEndsAt" TIMESTAMP(3);`).catch(() => {})
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "enterprises" ADD COLUMN IF NOT EXISTS "currentPeriodStart" TIMESTAMP(3);`).catch(() => {})
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "enterprises" ADD COLUMN IF NOT EXISTS "currentPeriodEnd" TIMESTAMP(3);`).catch(() => {})
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "enterprises" ADD COLUMN IF NOT EXISTS "subscriptionPrice" DECIMAL(12,2) DEFAULT 0;`).catch(() => {})
+    await basePrisma.$executeRawUnsafe(`ALTER TABLE "enterprises" ADD COLUMN IF NOT EXISTS "billingCycle" TEXT DEFAULT 'MONTHLY';`).catch(() => {})
+
     // 4. Security tables
     await basePrisma.$executeRawUnsafe(`
       DO $$
@@ -154,6 +162,89 @@ async function ensureDatabaseSchema() {
         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `).catch(() => {})
+
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "subscription_payments" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "enterpriseId" TEXT NOT NULL,
+        "amount" DECIMAL(12,2) NOT NULL,
+        "currency" TEXT NOT NULL DEFAULT 'KES',
+        "paymentMethod" TEXT NOT NULL,
+        "reference" TEXT NOT NULL,
+        "periodMonths" INTEGER NOT NULL DEFAULT 1,
+        "periodStart" TIMESTAMP(3) NOT NULL,
+        "periodEnd" TIMESTAMP(3) NOT NULL,
+        "notes" TEXT,
+        "recordedBy" TEXT NOT NULL,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `).catch(() => {})
+
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "system_notifications" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "enterpriseId" TEXT,
+        "targetUserId" TEXT,
+        "type" TEXT NOT NULL,
+        "title" TEXT NOT NULL,
+        "message" TEXT NOT NULL,
+        "severity" TEXT NOT NULL DEFAULT 'INFO',
+        "isRead" BOOLEAN NOT NULL DEFAULT false,
+        "readAt" TIMESTAMP(3),
+        "metadata" JSONB DEFAULT '{}',
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `).catch(() => {})
+
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "plan_configurations" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "tier" TEXT NOT NULL UNIQUE,
+        "name" TEXT NOT NULL,
+        "tagline" TEXT,
+        "maxChannels" INTEGER NOT NULL DEFAULT 1,
+        "maxUsers" INTEGER NOT NULL DEFAULT 3,
+        "auditRetentionDays" INTEGER NOT NULL DEFAULT 7,
+        "priceMonthly" DECIMAL(12,2) NOT NULL DEFAULT 0,
+        "priceAnnual" DECIMAL(12,2) NOT NULL DEFAULT 0,
+        "features" JSONB NOT NULL DEFAULT '{}',
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+    `).catch(() => {})
+
+    await basePrisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "idempotency_records" (
+        "key" TEXT NOT NULL PRIMARY KEY,
+        "statusCode" INTEGER NOT NULL,
+        "responseBody" JSONB NOT NULL,
+        "lockedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS "idempotency_records_lockedAt_idx" ON "idempotency_records"("lockedAt");
+    `).catch(() => {})
+
+    // Seed default global plan configurations if table is empty
+    const { PLAN_DEFINITIONS } = await import('./lib/plans.js')
+    for (const [tierKey, def] of Object.entries(PLAN_DEFINITIONS)) {
+      const existing = await basePrisma.planConfiguration.findUnique({ where: { tier: tierKey } }).catch(() => null)
+      if (!existing) {
+        await basePrisma.planConfiguration.create({
+          data: {
+            id: `plan-${tierKey.toLowerCase()}`,
+            tier: tierKey,
+            name: def.name,
+            tagline: def.tagline,
+            maxChannels: def.limits.maxChannels,
+            maxUsers: def.limits.maxUsers,
+            auditRetentionDays: def.limits.auditRetentionDays,
+            priceMonthly: tierKey === 'STARTER' ? 2500 : tierKey === 'PRO' ? 7500 : 25000,
+            priceAnnual: tierKey === 'STARTER' ? 25000 : tierKey === 'PRO' ? 75000 : 250000,
+            features: def.features as any,
+          },
+        }).catch(() => {})
+      }
+    }
 
     // 5. Ensure LUX Prototype enterprise exists and claims any unmapped existing data
     let prototype = await basePrisma.enterprise.findUnique({ where: { slug: 'prototype' } })
@@ -289,6 +380,14 @@ async function start() {
     purgeExpiredSecurityRecords().catch(err => console.error('[Cleanup Error]:', err))
   }, 3600_000)
   cleanupTimer.unref()
+
+  // Evaluate subscription lifecycles on boot and every 6 hours
+  const { BillingService } = await import('./modules/enterprises/billing.service.js')
+  BillingService.evaluateSubscriptionsAndNotify().catch(err => console.error('[Billing Lifecycle Error]:', err))
+  const subscriptionTimer = setInterval(() => {
+    BillingService.evaluateSubscriptionsAndNotify().catch(err => console.error('[Billing Lifecycle Error]:', err))
+  }, 6 * 3600_000)
+  subscriptionTimer.unref()
 
   // FIX: listen() comes LAST — after all handlers are ready
   try {

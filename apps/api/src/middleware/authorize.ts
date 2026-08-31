@@ -8,6 +8,11 @@ export function authorize(...allowedRoles: UserRole[]) {
       return
     }
 
+    // PLATFORM_OWNER is the supreme platform authority (rank 110)
+    if (request.user.role === 'PLATFORM_OWNER') {
+      return
+    }
+
     if (!allowedRoles.includes(request.user.role as UserRole)) {
       reply.status(403).send({
         error:         'Insufficient permissions',

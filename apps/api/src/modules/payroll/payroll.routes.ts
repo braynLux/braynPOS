@@ -4,12 +4,14 @@ import { calculateNetSalary }    from './payroll-calculator.service.js'
 import { prisma }                from '../../lib/prisma.js'
 import { authenticate }          from '../../middleware/authenticate.js'
 import { authorize }             from '../../middleware/authorize.js'
+import { requirePlanFeature }    from '../../middleware/plan-guard.js'
 import { z }                     from 'zod'
 import { logAction, AUDIT }      from '../../lib/audit.js'
 
 export const payrollRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
-  app.addHook('preHandler', authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'))
+  app.addHook('preHandler', requirePlanFeature('payroll'))
+  app.addHook('preHandler', authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'))
 
   // POST /payroll/salary-runs/cleanup
   app.post('/salary-runs/cleanup', async () => {

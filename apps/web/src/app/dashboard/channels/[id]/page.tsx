@@ -38,7 +38,7 @@ export default function ChannelDetailPage() {
   const [savingSalary, setSavingSalary] = useState(false)
 
   const fetchSummary = async (p: number) => {
-    if (!token) return
+    if (!token || !id) return
     try {
       const { startDate, endDate } = PERIODS[p]
       const [sRes, pRes] = await Promise.all([
@@ -49,12 +49,19 @@ export default function ChannelDetailPage() {
       setPerformance(pRes.performance || [])
     } catch (e) {
       console.error(e)
+      setSummary(null)
+      setPerformance([])
     }
   }
 
   useEffect(() => {
     if (!token || !id) return
     setLoading(true)
+    setChannel(null)
+    setSummary(null)
+    setPerformance([])
+    setUsers([])
+    setStock([])
     
     // Core channel fetch
     api.get<Channel>(`/channels/${id}`, token)
@@ -76,7 +83,7 @@ export default function ChannelDetailPage() {
     fetchSummary(period)
   }, [token, id])
 
-  useEffect(() => { fetchSummary(period) }, [period])
+  useEffect(() => { fetchSummary(period) }, [period, id])
 
   const fmt = (n: unknown) => new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(Number(n ?? 0))
   const totalItems = stock.length

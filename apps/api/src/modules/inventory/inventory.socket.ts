@@ -1,8 +1,6 @@
 import { Server, Socket } from 'socket.io'
 import { verifyToken } from '../../lib/jwt.js'
-import { eventBus }   from '../../lib/event-bus.js'
-
-// JWT configuration is handled centrally in lib/jwt.js
+import { eventBus } from '../../lib/event-bus.js'
 
 export function setupInventorySocket(io: Server) {
   const inventoryNamespace = io.of('/inventory')
@@ -18,13 +16,22 @@ export function setupInventorySocket(io: Server) {
     try {
       const decoded = verifyToken(token as string) as any
       socket.data.user = decoded
-      
-      // Join channel-specific room
-      if (decoded.channelId) {
-        socket.join(`channel:${decoded.channelId}`)
-      }
-      if (['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(decoded.role)) {
-        socket.join('channel:HQ')
+
+      const enterpriseId = decoded.enterpriseId
+      const channelId = decoded.channelId
+      const isPlatformOwner = decoded.role === 'PLATFORM_OWNER'
+
+      if (enterpriseId) {
+        // Strict multi-tenant channel room
+        if (channelId) {
+          socket.join(`enterprise:${enterpriseId}:channel:${channelId}`)
+        }
+        // Strict multi-tenant admin room
+        if (['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(decoded.role)) {
+          socket.join(`enterprise:${enterpriseId}:admins`)
+        }
+      } else if (isPlatformOwner) {
+        socket.join('platform:owners')
       }
     } catch {
       socket.disconnect()
@@ -40,15 +47,23 @@ export function setupInventorySocket(io: Server) {
     channelId: string
     availableQty: number
     movementType: string
+    enterpriseId?: string
   }) => {
-    // Broadcast to the specific channel room
-    inventoryNamespace.to(`channel:${payload.channelId}`).emit('stock_update', {
-      itemId:       payload.itemId,
-      availableQty: payload.availableQty,
-      movementType: payload.movementType
-    })
-
-    // Also broadcast to global admins room if we have one (optional)
-    inventoryNamespace.to('channel:HQ').emit('stock_update', payload)
+    if (payload.enterpriseId) {
+      // Broadcast strictly within this enterprise's channel and admin rooms
+      inventoryNamespace.to(`enterprise:${payload.enterpriseId}:channel:${payload.channelId}`).emit('stock_update', {
+        itemId:       payload.itemId,
+        availableQty: payload.availableQty,
+        movementType: payload.movementType,
+      })
+      inventoryNamespace.to(`enterprise:${payload.enterpriseId}:admins`).emit('stock_update', payload)
+    } else {
+      // Fallback for legacy channel broadcast
+      inventoryNamespace.to(`channel:${payload.channelId}`).emit('stock_update', {
+        itemId:       payload.itemId,
+        availableQty: payload.availableQty,
+        movementType: payload.movementType,
+      })
+    }
   })
 }

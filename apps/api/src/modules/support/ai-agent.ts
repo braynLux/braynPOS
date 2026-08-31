@@ -13,6 +13,7 @@ import { logKBGap }        from './kb-gap-detector.js'
 import { prisma }          from '../../lib/prisma.js'
 import { Prisma }          from '@prisma/client'
 import { diagnosticsService } from './diagnostics.service.js'
+import { requestContext }  from '../../lib/request-context.plugin.js'
 
 interface AgentContext {
   ticketId:       string
@@ -86,6 +87,13 @@ Min Retail Price: ${balance?.minRetailPrice || item.minRetailPrice}`)
 
   // 7-day Sales Sparkline Data
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const enterpriseId = requestContext.getStore()?.enterpriseId
+  const channelScopeSql = channelId
+    ? Prisma.sql`AND s."channelId" = ${channelId}`
+    : enterpriseId
+    ? Prisma.sql`AND s."channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
+    : Prisma.empty
+
   const salesSummary = await prisma.$queryRaw<any[]>`
     SELECT 
       TO_CHAR(s."createdAt", 'Mon DD') as "date", 
@@ -93,7 +101,7 @@ Min Retail Price: ${balance?.minRetailPrice || item.minRetailPrice}`)
     FROM sales s
     WHERE s."createdAt" >= ${sevenDaysAgo}
       AND s."deletedAt" IS NULL
-      ${channelId ? Prisma.sql`AND s."channelId" = ${channelId}` : Prisma.empty}
+      ${channelScopeSql}
     GROUP BY TO_CHAR(s."createdAt", 'Mon DD'), DATE_TRUNC('day', s."createdAt")
     ORDER BY DATE_TRUNC('day', s."createdAt") ASC
   `

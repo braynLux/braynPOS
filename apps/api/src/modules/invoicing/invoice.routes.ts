@@ -2,17 +2,19 @@ import type { FastifyPluginAsync } from 'fastify'
 import { invoiceService } from './invoice.service.js'
 import { authenticate }   from '../../middleware/authenticate.js'
 import { authorize }      from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { z }              from 'zod'
 import { createInvoiceSchema, listInvoicesQuerySchema, recordPaymentSchema } from './invoice.schema.js'
 
-const HQ_INVOICE_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_INVOICE_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const invoiceRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requirePlanFeature('invoicing'))
 
   // ── List invoices/quotations/proformas ──────────────────────────────
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request) => {
     const query = listInvoicesQuerySchema.parse(request.query)
 
@@ -28,7 +30,7 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Get by ID ────────────────────────────────────────────────────────
   app.get('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const isHQ   = HQ_INVOICE_ROLES.includes(request.user.role)
@@ -40,7 +42,7 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Create quotation / proforma / invoice ───────────────────────────
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request, reply) => {
     const body = createInvoiceSchema.parse(request.body)
 
@@ -59,7 +61,7 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Convert a quotation/proforma into a proforma/invoice ────────────
   app.post('/:id/convert', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const { targetType } = z.object({ targetType: z.enum(['PROFORMA', 'INVOICE']) }).parse(request.body)
@@ -73,7 +75,7 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Mark as sent ─────────────────────────────────────────────────────
   app.post('/:id/send', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const isHQ   = HQ_INVOICE_ROLES.includes(request.user.role)
@@ -82,7 +84,7 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Record a payment against an invoice ─────────────────────────────
   app.post('/:id/payments', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const { amount, paymentMethod } = recordPaymentSchema.parse(request.body)
@@ -92,7 +94,7 @@ export const invoiceRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Void ─────────────────────────────────────────────────────────────
   app.post('/:id/void', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const isHQ   = HQ_INVOICE_ROLES.includes(request.user.role)

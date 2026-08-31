@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify'
 import { prisma }    from '../../lib/prisma.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize }    from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { RATE }         from '../../lib/rate-limit.plugin.js'
 import { z }            from 'zod'
 
@@ -31,15 +32,14 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
     // ── RBAC Scoping ───────────────────────────────────────────────
     // MANAGER role is restricted to seeing only logs for their own channel.
     let effectiveChannelId = query.channelId
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
+    if (!['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role)) {
       effectiveChannelId = request.user.channelId || 'NONE' 
     }
 
-    const isPlatformOwner = request.user.role === 'PLATFORM_OWNER'
-    const enterpriseId    = request.user.enterpriseId
+    const enterpriseId = request.user.enterpriseId
 
     const where: any = {
-      ...(enterpriseId && !isPlatformOwner && { enterpriseId }),
+      ...(enterpriseId && { enterpriseId }),
       ...(effectiveChannelId && { channelId: effectiveChannelId }),
       ...(query.actorId      && { actorId:   query.actorId }),
       ...(query.action       && { action:    query.action }),
@@ -91,7 +91,10 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
   // Forensic tool to correct serial numbers post-sale.
   app.post('/serial-swap', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [
+      authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'),
+      requirePlanFeature('serials'),
+    ],
   }, async (request) => {
     const schema = z.object({
       saleId:      z.string().uuid(),
@@ -113,7 +116,10 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
   // GET /audit/serial-history
   app.get('/serial-history', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [
+      authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'),
+      requirePlanFeature('serials'),
+    ],
   }, async (request) => {
     const { auditService } = await import('./audit.service.js')
     return auditService.getSerialAudits()

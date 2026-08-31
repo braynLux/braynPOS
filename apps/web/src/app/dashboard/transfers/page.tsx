@@ -186,7 +186,8 @@ export default function TransfersPage() {
   )
 
   const userChannelId = user?.channelId
-  const isAdmin       = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
+  const isAdmin       = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'PLATFORM_OWNER'].includes(user?.role || '')
+  const isStorekeeper  = user?.role === 'STOREKEEPER'
 
   return (
     <div className="animate-fade-in">
@@ -198,7 +199,9 @@ export default function TransfersPage() {
             headers={['Transfer #', 'From Channel', 'To Channel', 'Items (Qty)', 'Status', 'Date']}
             getData={getExportData}
           />
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Transfer</button>
+          {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user?.role || '') && (
+            <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Transfer</button>
+          )}
         </div>
       </div>
 

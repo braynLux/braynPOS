@@ -40,7 +40,7 @@ export class TaxConnectorService {
   }
 
   async syncInvoice(saleId: string, actorChannelId?: string | null, actorRole?: string) {
-    const isGlobalRole = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actorRole ?? '')
+    const isGlobalRole = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actorRole ?? '')
     if (!isGlobalRole && !actorChannelId) {
       throw { statusCode: 400, message: 'Your account has no channel assigned' }
     }
@@ -77,7 +77,7 @@ export const taxRoutes: FastifyPluginAsync = async (app) => {
   // FIX 7: Added RATE.READ
   app.get('/config', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request, reply) => {
     const q = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
     const channelId = q.channelId || request.user.channelId
@@ -94,7 +94,7 @@ export const taxRoutes: FastifyPluginAsync = async (app) => {
   // FIX 7: Added RATE.APPROVAL — tax config is a sensitive financial write
   app.put('/config', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN')],
   }, async (request, reply) => {
     const q = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
     const channelId = q.channelId || request.user.channelId
@@ -120,7 +120,7 @@ export const taxRoutes: FastifyPluginAsync = async (app) => {
   // FIX 7: Added RATE.APPROVAL — triggers external API call per invocation
   app.post('/sync/:saleId', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { saleId } = z.object({ saleId: z.string().uuid() }).parse(request.params)
     return taxConnectorService.syncInvoice(saleId, request.user.channelId, request.user.role)

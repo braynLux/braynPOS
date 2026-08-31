@@ -4,14 +4,14 @@ import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
 
-const HQ_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const returnsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // ── Return report ────────────────────────────────────────────────────
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional(),
@@ -30,7 +30,7 @@ export const returnsRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Process a return against a sale ─────────────────────────────────
   app.post('/:saleId', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER')],
   }, async (request, reply) => {
     const { saleId } = z.object({ saleId: z.string().uuid() }).parse(request.params)
     const { lines } = z.object({

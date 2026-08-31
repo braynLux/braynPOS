@@ -49,7 +49,7 @@ export default function FleetAnalyticsPage() {
             Cross-enterprise growth, distribution and health metrics
           </p>
         </div>
-        <Link href="/dashboard" className="btn btn-ghost btn-sm">← Back to Fleet Dashboard</Link>
+        <Link href="/dashboard/enterprises" className="btn btn-ghost btn-sm">← Back to Fleet HQ</Link>
       </div>
 
       {loading ? (

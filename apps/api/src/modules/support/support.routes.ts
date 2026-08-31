@@ -5,14 +5,14 @@ import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
 import { SupportCategory, TicketPriority, TicketStatus } from '@prisma/client'
 
-const GLOBAL_SUPPORT_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const GLOBAL_SUPPORT_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const supportRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // POST /support/tickets — Create a new ticket (Managers)
   app.post('/tickets', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
       subject: z.string().min(1).max(200),
@@ -33,7 +33,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /support/tickets — List tickets (Filters for Admins vs Managers)
   app.get('/tickets', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       status: z.nativeEnum(TicketStatus).optional(),
@@ -76,7 +76,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /support/tickets/:id — Get ticket details
   app.get('/tickets/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const ticket = await supportService.getTicketDetails(
@@ -102,7 +102,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /support/tickets/:id/messages — Reply to a ticket
   app.post('/tickets/:id/messages', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const { content } = z.object({ content: z.string().min(1).max(5000) }).parse(request.body)
@@ -138,7 +138,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /support/tickets/:id/status — Update ticket status (Admins only)
   app.patch('/tickets/:id/status', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const { status } = z.object({ status: z.nativeEnum(TicketStatus) }).parse(request.body)
@@ -147,7 +147,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // DELETE /support/tickets/:id — Delete a ticket (if Resolved/Closed)
   app.delete('/tickets/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const ticket = await supportService.getTicketDetails(
@@ -174,7 +174,7 @@ export const supportRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /support/ai-portal/chat — Direct chat with BraynAI (No ticket)
   app.post('/ai-portal/chat', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { message } = z.object({ message: z.string().min(1).max(5000) }).parse(request.body)
     

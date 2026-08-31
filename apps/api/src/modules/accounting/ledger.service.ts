@@ -12,6 +12,7 @@ function parseEnd(dateStr: string): Date {
 export class LedgerService {
   async getJournalEntries(query: {
     channelId?:      string
+    enterpriseId?:   string
     referenceType?:  string
     startDate?:      string
     endDate?:        string
@@ -23,7 +24,9 @@ export class LedgerService {
     const skip  = (page - 1) * limit
 
     const where: Prisma.JournalEntryWhereInput = {
-      ...(query.channelId     && { channelId:     query.channelId }),
+      ...(query.channelId ? { channelId: query.channelId } : query.enterpriseId ? {
+        channel: { enterpriseId: query.enterpriseId, deletedAt: null }
+      } : {}),
       ...(query.referenceType && { referenceType: query.referenceType as Prisma.EnumJournalRefTypeFilter }),
       ...(query.startDate || query.endDate ? {
         postedAt: {
@@ -66,11 +69,13 @@ export class LedgerService {
     return entry
   }
 
-  async getTrialBalance(asOfDate?: string, channelId?: string) {
+  async getTrialBalance(asOfDate?: string, channelId?: string, enterpriseId?: string) {
     // FIX 1: Use end-of-day UTC for the as-of date
     const dateFilter    = asOfDate ? parseEnd(asOfDate) : new Date()
     const channelFilter = channelId
       ? Prisma.sql`AND je."channelId" = ${channelId}`
+      : enterpriseId
+      ? Prisma.sql`AND je."channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
       : Prisma.sql``
 
     const rows = await prisma.$queryRaw<Array<{
@@ -123,11 +128,12 @@ export class LedgerService {
 
   // FIX 2: channelId now scopes through journal entry join
   async getAccountLedger(accountId: string, query: {
-    startDate?:  string
-    endDate?:    string
-    channelId?:  string
-    page?:       number
-    limit?:      number
+    startDate?:    string
+    endDate?:      string
+    channelId?:    string
+    enterpriseId?: string
+    page?:         number
+    limit?:        number
   }) {
     const page  = query.page  ?? 1
     const limit = query.limit ?? 50
@@ -135,9 +141,11 @@ export class LedgerService {
 
     const where: Prisma.LedgerLineWhereInput = {
       accountId,
-      ...(query.startDate || query.endDate || query.channelId ? {
+      ...(query.startDate || query.endDate || query.channelId || query.enterpriseId ? {
         journalEntry: {
-          ...(query.channelId && { channelId: query.channelId }),
+          ...(query.channelId ? { channelId: query.channelId } : query.enterpriseId ? {
+            channel: { enterpriseId: query.enterpriseId, deletedAt: null }
+          } : {}),
           ...(query.startDate || query.endDate ? {
             postedAt: {
               ...(query.startDate && { gte: parseStart(query.startDate) }),
@@ -164,12 +172,14 @@ export class LedgerService {
     return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } }
   }
 
-  async getProfitLoss(startDate: string, endDate: string, channelId?: string) {
+  async getProfitLoss(startDate: string, endDate: string, channelId?: string, enterpriseId?: string) {
     // FIX 1: Full-day UTC boundaries
     const start         = parseStart(startDate)
     const end           = parseEnd(endDate)
     const channelFilter = channelId
       ? Prisma.sql`AND je."channelId" = ${channelId}`
+      : enterpriseId
+      ? Prisma.sql`AND je."channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
       : Prisma.sql``
 
     const rows = await prisma.$queryRaw<Array<{
@@ -217,11 +227,13 @@ export class LedgerService {
     return { revenue, totalRevenue, expenses, totalExpenses, netProfit: totalRevenue - totalExpenses, startDate, endDate }
   }
 
-  async getBalanceSheet(asOfDate?: string, channelId?: string) {
+  async getBalanceSheet(asOfDate?: string, channelId?: string, enterpriseId?: string) {
     // FIX 1: End-of-day UTC boundary
     const dateFilter    = asOfDate ? parseEnd(asOfDate) : new Date()
     const channelFilter = channelId
       ? Prisma.sql`AND je."channelId" = ${channelId}`
+      : enterpriseId
+      ? Prisma.sql`AND je."channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
       : Prisma.sql``
 
     const rows = await prisma.$queryRaw<Array<{

@@ -7,7 +7,7 @@ import { prisma }                  from '../../lib/prisma.js'
 import { validateApprovalToken }   from '../auth/manager-approve.routes.js'
 import { z }                       from 'zod'
 
-const HQ_CUSTOMER_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_CUSTOMER_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -18,7 +18,7 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request) => {
@@ -49,7 +49,7 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:id', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request, reply) => {
@@ -76,14 +76,14 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.post('/', {
     config:     RATE.APPROVAL,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request, reply) => {
     const isHQ = HQ_CUSTOMER_ROLES.includes(request.user.role)
     const body = z.object({
-      name:        z.string().min(1),
-      phone:       z.string().min(10).max(13).regex(/^[+0-9]+$/, 'Invalid phone number format'),
+      name:        z.string().min(1, 'Customer name is required'),
+      phone:       z.string().min(8).max(20).regex(/^[+0-9\s-]+$/, 'Invalid phone number format').optional().or(z.literal('')),
       // FIX: an untouched optional email input submits '', which
       // .email().optional() rejects (it only allows undefined) — crashing
       // customer creation with a 500 whenever email is left blank.
@@ -95,7 +95,18 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
       isThirdParty:  z.boolean().optional(),
     }).parse(request.body)
 
-    const channelId = isHQ ? (body.channelId || request.user.channelId) : request.user.channelId
+    let channelId: string | null | undefined = isHQ ? (body.channelId || request.user.channelId) : request.user.channelId
+    if (!channelId) {
+      // Fall back to enterprise default channel if user is HQ
+      const defaultChannel = await prisma.channel.findFirst({
+        where: {
+          deletedAt: null,
+          ...(request.user.enterpriseId ? { enterpriseId: request.user.enterpriseId } : {}),
+        },
+        select: { id: true },
+      })
+      channelId = defaultChannel?.id ?? null
+    }
     if (!channelId) {
       throw { statusCode: 400, message: 'channelId is required to create a customer' }
     }
@@ -111,7 +122,7 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.patch('/:id', {
     config:     RATE.APPROVAL,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request) => {
@@ -148,7 +159,7 @@ export const customersRoutes: FastifyPluginAsync = async (app) => {
   app.delete('/:id', {
     config:     RATE.APPROVAL,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON',
     )],
   }, async (request, reply) => {

@@ -5,14 +5,14 @@ import { authorize }       from '../../middleware/authorize.js'
 import { prisma }          from '../../lib/prisma.js'
 import { z }               from 'zod'
 
-const HQ_PURCHASE_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_PURCHASE_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const purchaseRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // ── List purchases ──────────────────────────────────────────────────
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       channelId:  z.string().uuid().optional(),
@@ -38,7 +38,7 @@ export const purchaseRoutes: FastifyPluginAsync = async (app) => {
   // PROMOTER, etc.) could read full purchase records including costs,
   // supplier details, and landed costs. Now restricted to managers.
   app.get('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id }  = z.object({ id: z.string().uuid() }).parse(request.params)
     const isHQ    = HQ_PURCHASE_ROLES.includes(request.user.role)
@@ -50,7 +50,7 @@ export const purchaseRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Commit purchase ─────────────────────────────────────────────────
   app.post('/commit', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
       supplierId:      z.string().uuid(),
@@ -90,7 +90,7 @@ export const purchaseRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Delete purchase ─────────────────────────────────────────────────
   app.delete('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }           = z.object({ id: z.string().uuid() }).parse(request.params)
     const { approvalToken } = z.object({ approvalToken: z.string().optional() }).parse(request.body)

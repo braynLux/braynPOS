@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { RATE } from '../../lib/rate-limit.plugin.js'
 import { z } from 'zod'
 
@@ -17,11 +18,12 @@ const itemPromptSchema = z.object({
 
 export const aiRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requirePlanFeature('aiPortal'))
 
   // POST /ai/generate-description
   app.post('/generate-description', {
     config: RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { name, category, brand } = itemPromptSchema.parse(request.body)
 
@@ -53,7 +55,7 @@ export const aiRoutes: FastifyPluginAsync = async (app) => {
   // POST /ai/batch-generate
   app.post('/batch-generate', {
     config: RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const schema = z.object({
       items: z.array(itemPromptSchema.extend({
@@ -92,7 +94,7 @@ export const aiRoutes: FastifyPluginAsync = async (app) => {
   // POST /ai/generate-mockup
   app.post('/generate-mockup', {
     config: RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { name, category, brand } = itemPromptSchema.parse(request.body)
 

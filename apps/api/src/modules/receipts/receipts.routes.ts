@@ -11,7 +11,7 @@ export const receiptsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:saleId', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER',
     )],
   }, async (request, reply) => {

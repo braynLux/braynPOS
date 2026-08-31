@@ -67,7 +67,7 @@ export default function FleetSecurityPage() {
             Cross-enterprise login forensics, locked accounts, and platform-level security events
           </p>
         </div>
-        <Link href="/dashboard" className="btn btn-ghost btn-sm">← Back to Fleet Dashboard</Link>
+        <Link href="/dashboard/enterprises" className="btn btn-ghost btn-sm">← Back to Fleet HQ</Link>
       </div>
 
       {loading ? (

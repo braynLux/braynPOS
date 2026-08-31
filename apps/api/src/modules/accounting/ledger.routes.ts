@@ -2,16 +2,18 @@ import type { FastifyPluginAsync } from 'fastify'
 import { ledgerService } from './ledger.service.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { z } from 'zod'
 
-const HQ_LEDGER_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_LEDGER_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const ledgerRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requirePlanFeature('accounting'))
 
   // GET /accounting/journal-entries
   app.get('/journal-entries', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional(),
@@ -22,17 +24,22 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
       limit: z.coerce.number().min(1).max(100).optional(),
     }).parse(request.query)
 
+    let cid = query.channelId
     if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
       if (!request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
-      query.channelId = request.user.channelId
+      cid = request.user.channelId
     }
 
-    return ledgerService.getJournalEntries(query)
+    return ledgerService.getJournalEntries({
+      ...query,
+      channelId: cid,
+      enterpriseId: request.user.enterpriseId ?? undefined,
+    })
   })
 
   // GET /accounting/journal-entries/:id
   app.get('/journal-entries/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const isHQ = HQ_LEDGER_ROLES.includes(request.user.role)
@@ -42,7 +49,7 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /accounting/trial-balance
   app.get('/trial-balance', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       asOfDate: z.string().optional(),
@@ -55,12 +62,12 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
       cid = request.user.channelId
     }
 
-    return ledgerService.getTrialBalance(query.asOfDate, cid)
+    return ledgerService.getTrialBalance(query.asOfDate, cid, request.user.enterpriseId ?? undefined)
   })
 
   // GET /accounting/ledger/:accountId
   app.get('/ledger/:accountId', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { accountId } = request.params as { accountId: string }
     const query = z.object({
@@ -71,17 +78,22 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
       channelId: z.string().uuid().optional(),
     }).parse(request.query)
 
+    let cid = query.channelId
     if (!HQ_LEDGER_ROLES.includes(request.user.role)) {
       if (!request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
-      query.channelId = request.user.channelId
+      cid = request.user.channelId
     }
 
-    return ledgerService.getAccountLedger(accountId, query)
+    return ledgerService.getAccountLedger(accountId, {
+      ...query,
+      channelId: cid,
+      enterpriseId: request.user.enterpriseId ?? undefined,
+    })
   })
 
   // GET /accounting/profit-loss
   app.get('/profit-loss', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       startDate: z.string(),
@@ -95,12 +107,12 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
       cid = request.user.channelId
     }
 
-    return ledgerService.getProfitLoss(query.startDate, query.endDate, cid)
+    return ledgerService.getProfitLoss(query.startDate, query.endDate, cid, request.user.enterpriseId ?? undefined)
   })
 
   // GET /accounting/balance-sheet
   app.get('/balance-sheet', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       asOfDate: z.string().optional(),
@@ -113,12 +125,12 @@ export const ledgerRoutes: FastifyPluginAsync = async (app) => {
       cid = request.user.channelId
     }
 
-    return ledgerService.getBalanceSheet(query.asOfDate, cid)
+    return ledgerService.getBalanceSheet(query.asOfDate, cid, request.user.enterpriseId ?? undefined)
   })
 
   // GET /accounting/inventory-balances — live stock from inventory_balances
   app.get('/inventory-balances', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER', 'SALES_PERSON')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER', 'SALES_PERSON')],
   }, async (request) => {
     let { channelId } = z.object({
       channelId: z.string().uuid().optional(),

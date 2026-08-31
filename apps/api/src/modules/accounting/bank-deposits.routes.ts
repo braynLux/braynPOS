@@ -4,14 +4,14 @@ import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
 
-const HQ_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const bankDepositsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // ── Channel banks ────────────────────────────────────────────────────
   app.get('/banks', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
     if (!HQ_ROLES.includes(request.user.role)) {
@@ -22,7 +22,7 @@ export const bankDepositsRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post('/banks', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
       channelId:     z.string().uuid(),
@@ -43,7 +43,7 @@ export const bankDepositsRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Deposits ─────────────────────────────────────────────────────────
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional(),
@@ -61,7 +61,7 @@ export const bankDepositsRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.get('/cash-position', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
     if (!HQ_ROLES.includes(request.user.role)) {
@@ -72,7 +72,7 @@ export const bankDepositsRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
       channelId: z.string().uuid(),

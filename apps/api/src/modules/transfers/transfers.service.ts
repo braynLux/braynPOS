@@ -438,22 +438,30 @@ export class TransfersService {
   }
 
   async findAll(query: {
-    channelId?: string
-    status?:    string
-    page?:      number
-    limit?:     number
-    startDate?: string
-    endDate?:   string
+    channelId?:    string
+    status?:       string
+    page?:         number
+    limit?:        number
+    startDate?:    string
+    endDate?:      string
+    enterpriseId?: string
   }) {
     const page  = query.page  ?? 1
     const limit = Math.min(query.limit ?? 25, 100)
     const skip  = (page - 1) * limit
 
     const where: Prisma.TransferWhereInput = {
-      ...(query.status    && { status: query.status as any }),
-      ...(query.channelId && {
-        OR: [{ fromChannelId: query.channelId }, { toChannelId: query.channelId }],
-      }),
+      ...(query.status && { status: query.status as any }),
+      ...(query.channelId
+        ? { OR: [{ fromChannelId: query.channelId }, { toChannelId: query.channelId }] }
+        : query.enterpriseId
+        ? {
+            OR: [
+              { fromChannel: { enterpriseId: query.enterpriseId } },
+              { toChannel:   { enterpriseId: query.enterpriseId } },
+            ]
+          }
+        : {}),
       ...(query.startDate || query.endDate ? {
         createdAt: {
           ...(query.startDate && { gte: new Date(query.startDate) }),

@@ -22,14 +22,24 @@ export class StockService {
     return (setting?.value as any)?.lowStockThreshold ?? 5
   }
 
-  async getChannelBalances(channelId?: string, categoryId?: string) {
+  async getChannelBalances(channelId?: string, categoryId?: string, enterpriseId?: string) {
     const isGlobal = !channelId || channelId === '';
     
+    const channelFilter = !isGlobal
+      ? Prisma.sql`AND ib."channelId" = ${channelId}`
+      : enterpriseId
+      ? Prisma.sql`AND ib."channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
+      : Prisma.empty
+
+    const itemFilter = enterpriseId
+      ? Prisma.sql`AND i."enterpriseId" = ${enterpriseId}`
+      : Prisma.empty
+
     let catFilter = Prisma.empty;
     if (categoryId && categoryId !== '') {
-      const selectedCat = await basePrisma.category.findUnique({ where: { id: categoryId }, select: { name: true } });
+      const selectedCat = await prisma.category.findUnique({ where: { id: categoryId }, select: { name: true } });
       if (selectedCat) {
-        const matchingCats = await basePrisma.category.findMany({
+        const matchingCats = await prisma.category.findMany({
           where: { name: { equals: selectedCat.name, mode: 'insensitive' }, deletedAt: null },
           select: { id: true }
         });
@@ -56,7 +66,8 @@ export class StockService {
       INNER JOIN "inventory_balances" ib ON i."id" = ib."itemId" 
       WHERE i."deletedAt" IS NULL 
         AND i."isActive" = true
-        ${isGlobal ? Prisma.empty : Prisma.sql`AND ib."channelId" = ${channelId}`}
+        ${itemFilter}
+        ${channelFilter}
         ${catFilter}
         -- FIX: Use a subquery to check for ANY actual activity (stock or history) in the TARGET channel(s)
         AND (
@@ -73,31 +84,50 @@ export class StockService {
       ORDER BY i."name" ASC
     `;
 
-    return basePrisma.$queryRaw<any[]>(query);
+    return prisma.$queryRaw<any[]>(query);
   }
 
   /**
    * Get balances across all channels for an item.
    */
-  async getItemBalancesAllChannels(itemId: string) {
-    return basePrisma.$queryRaw<
-      Array<{ channelId: string; availableQty: number; incomingQty: number; lastMovementAt: Date }>
+  async getItemBalancesAllChannels(itemId: string, enterpriseId?: string) {
+    return prisma.$queryRaw<
+      Array<{ channelId: string; availableQty: number; incomingQty: number; lastMovementAt: Date; channelName: string; channelCode: string }>
     >`
-      SELECT ib."channelId", ib."availableQty", ib."incomingQty", ib."lastMovementAt"
+      SELECT 
+        ib."channelId", 
+        ib."availableQty", 
+        ib."incomingQty", 
+        ib."lastMovementAt",
+        c."name" as "channelName",
+        c."code" as "channelCode"
       FROM "inventory_balances" ib
+      JOIN "channels" c ON ib."channelId" = c."id"
       WHERE ib."itemId" = ${itemId}
+        AND c."deletedAt" IS NULL
+        ${enterpriseId ? Prisma.sql`AND c."enterpriseId" = ${enterpriseId}` : Prisma.empty}
     `
   }
 
-  async getLowStockItems(channelId?: string, categoryId?: string) {
+  async getLowStockItems(channelId?: string, categoryId?: string, enterpriseId?: string) {
     const isGlobal = !channelId || channelId === '';
     const threshold = await this.getThreshold(channelId || '');
 
+    const channelFilter = !isGlobal
+      ? Prisma.sql`AND ib."channelId" = ${channelId}`
+      : enterpriseId
+      ? Prisma.sql`AND ib."channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
+      : Prisma.empty
+
+    const itemFilter = enterpriseId
+      ? Prisma.sql`AND i."enterpriseId" = ${enterpriseId}`
+      : Prisma.empty
+
     let catFilter = Prisma.empty;
     if (categoryId && categoryId !== '') {
-      const selectedCat = await basePrisma.category.findUnique({ where: { id: categoryId }, select: { name: true } });
+      const selectedCat = await prisma.category.findUnique({ where: { id: categoryId }, select: { name: true } });
       if (selectedCat) {
-        const matchingCats = await basePrisma.category.findMany({
+        const matchingCats = await prisma.category.findMany({
           where: { name: { equals: selectedCat.name, mode: 'insensitive' }, deletedAt: null },
           select: { id: true }
         });
@@ -122,8 +152,9 @@ export class StockService {
       FROM "items" i
       LEFT JOIN "categories" c ON i."categoryId" = c."id"
       INNER JOIN "inventory_balances" ib ON ib."itemId" = i."id" 
-        ${isGlobal ? Prisma.empty : Prisma.sql`AND ib."channelId" = ${channelId}`}
       WHERE i."deletedAt" IS NULL AND i."isActive" = true
+        ${itemFilter}
+        ${channelFilter}
         ${catFilter}
         -- Filter out ghost rows
         AND (
@@ -141,7 +172,7 @@ export class StockService {
       ORDER BY SUM(COALESCE(ib."availableQty", 0)) ASC
     `;
 
-    return basePrisma.$queryRaw<any[]>(query);
+    return prisma.$queryRaw<any[]>(query);
   }
 
   /**

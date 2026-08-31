@@ -3,7 +3,7 @@ import { buildCreditNoteJournalEntry } from '../../lib/ledger.js'
 
 const RETURN_REFERENCE_TYPE = 'sale_return'
 const NON_ADMIN_RETURN_WINDOW_MS = 3 * 60 * 60 * 1000
-const HQ_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export async function findReturns(query: {
   channelId?: string; startDate?: string; endDate?: string

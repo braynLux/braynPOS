@@ -4,13 +4,13 @@ import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
 
-const HQ_LPO_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_LPO_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const lpoRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional(),
@@ -30,7 +30,7 @@ export const lpoRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.get('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const isHQ = HQ_LPO_ROLES.includes(request.user.role)
@@ -41,7 +41,7 @@ export const lpoRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
       supplierId: z.string().uuid(),
@@ -69,7 +69,7 @@ export const lpoRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post('/:id/send', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const channelId = HQ_LPO_ROLES.includes(request.user.role) ? undefined : (request.user.channelId ?? undefined)
@@ -80,7 +80,7 @@ export const lpoRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post('/:id/cancel', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const channelId = HQ_LPO_ROLES.includes(request.user.role) ? undefined : (request.user.channelId ?? undefined)

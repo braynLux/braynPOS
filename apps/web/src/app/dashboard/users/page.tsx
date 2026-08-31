@@ -45,7 +45,8 @@ export default function UsersPage() {
   const [resetTempPassword, setResetTempPassword] = useState('')
   const [resetting, setResetting] = useState(false)
 
-  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+  const isPlatformOwner = currentUser?.role === 'PLATFORM_OWNER'
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN' || isPlatformOwner
   const isManagerAdmin = currentUser?.role === 'MANAGER_ADMIN'
   const isManager = currentUser?.role === 'MANAGER'
   
@@ -54,7 +55,7 @@ export default function UsersPage() {
 
   // Role hierarchy for reset permission: actor rank must be HIGHER than target
   const ROLE_RANK: Record<string, number> = {
-    SUPER_ADMIN: 100, ADMIN: 80, MANAGER_ADMIN: 70, MANAGER: 60,
+    PLATFORM_OWNER: 110, SUPER_ADMIN: 100, ADMIN: 80, MANAGER_ADMIN: 70, MANAGER: 60,
     CASHIER: 30, STOREKEEPER: 30, PROMOTER: 30, SALES_PERSON: 30
   }
   const canResetPassword = (targetRole: string) => {

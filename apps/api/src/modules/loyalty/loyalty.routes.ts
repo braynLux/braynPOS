@@ -7,7 +7,7 @@ import { basePrisma }     from '../../lib/prisma.js'
 import { z }              from 'zod'
 import type { UserRole }  from '@prisma/client'
 
-const HQ_LOYALTY_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_LOYALTY_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const loyaltyRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -20,7 +20,7 @@ export const loyaltyRoutes: FastifyPluginAsync = async (app) => {
   app.get('/history/:customerId', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN' as UserRole, 'MANAGER_ADMIN' as UserRole,
+      'PLATFORM_OWNER' as UserRole, 'SUPER_ADMIN' as UserRole, 'MANAGER_ADMIN' as UserRole,
       'ADMIN'       as UserRole,
       'MANAGER'     as UserRole, 'CASHIER'       as UserRole,
       'SALES_PERSON' as UserRole,
@@ -63,7 +63,7 @@ export const loyaltyRoutes: FastifyPluginAsync = async (app) => {
   app.post('/redeem', {
     config:     RATE.SALE_COMMIT,
     preHandler: [authorize(
-      'SUPER_ADMIN' as UserRole, 'MANAGER_ADMIN' as UserRole,
+      'PLATFORM_OWNER' as UserRole, 'SUPER_ADMIN' as UserRole, 'MANAGER_ADMIN' as UserRole,
       'ADMIN'       as UserRole,
       'MANAGER'     as UserRole, 'CASHIER'       as UserRole,
     )],

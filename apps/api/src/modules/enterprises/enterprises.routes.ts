@@ -1,8 +1,10 @@
 import type { FastifyPluginAsync } from 'fastify'
 import { EnterpriseService } from './enterprises.service.js'
+import { BillingService } from './billing.service.js'
 import { OnboardEnterpriseSchema, UpdateEnterpriseSchema, CreateInviteSchema, UpdatePlanSchema } from './enterprises.schema.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
+import { z } from 'zod'
 
 export const enterpriseRoutes: FastifyPluginAsync = async (app) => {
   // ── Public: Validate Invite Code Pre-Flight ──────────────────────────
@@ -51,9 +53,7 @@ export const enterpriseRoutes: FastifyPluginAsync = async (app) => {
       return EnterpriseService.revokeInvite(id)
     })
 
-    // ── Fleet Management (Platform Owner Only) ─────────────────────────
-    // NOTE: These routes MUST be registered BEFORE /:id routes to avoid path collision
-
+    // ── Fleet Management & Billing Overview (Platform Owner Only) ─────
     authApp.get('/fleet/stats', {
       preHandler: [authorize('PLATFORM_OWNER')],
     }, async () => {
@@ -64,6 +64,12 @@ export const enterpriseRoutes: FastifyPluginAsync = async (app) => {
       preHandler: [authorize('PLATFORM_OWNER')],
     }, async () => {
       return EnterpriseService.getSecurityOverview()
+    })
+
+    authApp.get('/billing/overview', {
+      preHandler: [authorize('PLATFORM_OWNER')],
+    }, async () => {
+      return BillingService.getBillingSummary()
     })
 
     // ── Enterprise Management ─────────────────────────────────────────
@@ -154,6 +160,64 @@ export const enterpriseRoutes: FastifyPluginAsync = async (app) => {
       const { id } = request.params as { id: string }
       const body = UpdatePlanSchema.parse(request.body)
       return EnterpriseService.updatePlan(id, body)
+    })
+
+    // ── SaaS Billing & Trial Management ────────────────────────────────
+    // Get enterprise billing profile and payment history
+    authApp.get('/:id/billing', {
+      preHandler: [authorize('PLATFORM_OWNER', 'MANAGER_ADMIN', 'SUPER_ADMIN')],
+    }, async (request, reply) => {
+      const { id } = request.params as { id: string }
+      if (request.user.role !== 'PLATFORM_OWNER' && request.user.enterpriseId !== id) {
+        return reply.status(403).send({ error: 'Access denied to this billing profile' })
+      }
+      return BillingService.getEnterpriseBilling(id)
+    })
+
+    // Record subscription payment (Platform Owner only)
+    authApp.post('/:id/payments', {
+      preHandler: [authorize('PLATFORM_OWNER')],
+    }, async (request) => {
+      const { id } = request.params as { id: string }
+      const schema = z.object({
+        amount:        z.number().positive(),
+        currency:      z.string().optional().default('KES'),
+        paymentMethod: z.enum(['MPESA', 'BANK_TRANSFER', 'CARD', 'CASH']),
+        reference:     z.string().min(2),
+        periodMonths:  z.number().int().min(1).max(60).optional().default(1),
+        notes:         z.string().optional(),
+      })
+      const body = schema.parse(request.body)
+      return BillingService.recordPayment(id, body, request.user.sub)
+    })
+
+    // Start paid software subscription (Platform Owner only)
+    authApp.post('/:id/start-software', {
+      preHandler: [authorize('PLATFORM_OWNER')],
+    }, async (request) => {
+      const { id } = request.params as { id: string }
+      const schema = z.object({
+        amount:        z.number().min(0).optional(),
+        currency:      z.string().optional().default('KES'),
+        paymentMethod: z.enum(['MPESA', 'BANK_TRANSFER', 'CARD', 'CASH']).optional(),
+        reference:     z.string().optional(),
+        periodMonths:  z.number().int().min(1).max(60).optional().default(1),
+        notes:         z.string().optional(),
+      })
+      const body = schema.parse(request.body)
+      return BillingService.startSoftware(id, body, request.user.sub)
+    })
+
+    // Extend free trial (Platform Owner only)
+    authApp.post('/:id/extend-trial', {
+      preHandler: [authorize('PLATFORM_OWNER')],
+    }, async (request) => {
+      const { id } = request.params as { id: string }
+      const schema = z.object({
+        days: z.number().int().min(1).max(365),
+      })
+      const body = schema.parse(request.body)
+      return BillingService.extendTrial(id, body.days, request.user.sub)
     })
   })
 }

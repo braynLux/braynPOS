@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from 'fastify'
 import { z } from 'zod'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize }    from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import {
   calculateCommission,
   buildCommissionPayout,
@@ -28,15 +29,16 @@ const payoutRequestSchema = z.object({
   channelId:   z.string().uuid().optional(),
 })
 
-const HQ_COMMISSION_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_COMMISSION_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const commissionRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requirePlanFeature('commissions'))
 
   const isHQ = (role: string) => HQ_COMMISSION_ROLES.includes(role)
 
   app.get('/stats', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional(),
@@ -54,7 +56,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON', 'PROMOTER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON', 'PROMOTER')],
   }, async (request) => {
     const query = z.object({
       userId:    z.string().uuid().optional(),
@@ -78,7 +80,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post('/rules', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request, reply) => {
     const body = ruleSchema.parse(request.body)
     const rule = await prisma.commissionRule.create({ data: body as any })
@@ -86,7 +88,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.get('/rules', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { channelId } = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
     let effectiveChannelId = channelId
@@ -103,7 +105,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.patch('/rules/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const body   = ruleSchema.partial().parse(request.body)
@@ -111,7 +113,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.delete('/rules/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     await prisma.commissionRule.update({ where: { id }, data: { isActive: false } })
@@ -119,7 +121,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.patch('/:id/approve', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     const existing = await basePrisma.commissionEntry.findUniqueOrThrow({ where: { id } })
@@ -140,7 +142,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post('/payout', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body   = payoutRequestSchema.parse(request.body)
     if (!isHQ(request.user.role)) {
@@ -164,7 +166,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
 
   // ── Single sale recalculation ─────────────────────────────────────
   app.post('/recalculate/:saleId', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
     const { saleId } = request.params as { saleId: string }
     const result     = await calculateCommission(saleId)
@@ -179,7 +181,7 @@ export const commissionRoutes: FastifyPluginAsync = async (app) => {
   // After running this, delete the draft salary run and create a new one
   // — it will automatically include all newly calculated commissions.
   app.post('/recalculate-month', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
     const { month, year } = z.object({
       month: z.coerce.number().int().min(1).max(12),

@@ -2,15 +2,17 @@ import type { FastifyPluginAsync } from 'fastify'
 import { serialsService } from './serials.service.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { z } from 'zod'
 
 export const serialsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
-  const isGlobalRole = (role: string) => ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(role)
+  app.addHook('preHandler', requirePlanFeature('serials'))
+  const isGlobalRole = (role: string) => ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(role)
 
   // GET /serials?itemId=xxx&channelId=xxx
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER')],
   }, async (request) => {
     const query = z.object({
       itemId: z.string(),
@@ -25,7 +27,7 @@ export const serialsRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /serials/lookup/:serialNo
   app.get('/lookup/:serialNo', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER', 'SALES_PERSON', 'PROMOTER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER', 'SALES_PERSON', 'PROMOTER')],
   }, async (request) => {
     const { serialNo } = request.params as { serialNo: string }
     const serial = await serialsService.findBySerialNo(serialNo, request.user)
@@ -35,7 +37,7 @@ export const serialsRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /serials/search?q=xxx
   app.get('/search', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER', 'SALES_PERSON', 'PROMOTER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER', 'SALES_PERSON', 'PROMOTER')],
   }, async (request) => {
     const { q } = z.object({ q: z.string().min(1) }).parse(request.query)
     return serialsService.searchSerials(q, request.user)
@@ -43,7 +45,7 @@ export const serialsRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /serials/available?itemId=xxx&channelId=xxx
   app.get('/available', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER', 'SALES_PERSON', 'PROMOTER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER', 'SALES_PERSON', 'PROMOTER')],
   }, async (request) => {
     const query = z.object({
       itemId: z.string(),
@@ -60,7 +62,7 @@ export const serialsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /serials
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request, reply) => {
     const body = z.object({
       serialNo: z.string().min(1),
@@ -79,7 +81,7 @@ export const serialsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /serials/bulk
   app.post('/bulk', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request, reply) => {
     const body = z.object({
       serials: z.array(z.object({
@@ -101,7 +103,7 @@ export const serialsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /serials/:id/write-off
   app.post('/:id/write-off', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
     if (!isGlobalRole(request.user.role) && !request.user.channelId) {

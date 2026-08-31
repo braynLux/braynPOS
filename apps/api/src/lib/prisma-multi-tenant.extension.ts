@@ -5,9 +5,21 @@ const READ_OPS   = new Set(['findFirst', 'findMany', 'findUnique', 'findUniqueOr
 const WRITE_OPS  = new Set(['create', 'createMany'])
 const MUTATE_OPS = new Set(['update', 'updateMany', 'upsert', 'delete', 'deleteMany'])
 
-const ISOLATED_MODELS = new Set([
+// Models with direct enterpriseId column
+const ENTERPRISE_DIRECT_MODELS = new Set([
+  'Channel',
+  'User',
+  'Item',
+  'AuditLog',
+  'SystemNotification',
+  'SubscriptionPayment',
+  'EnterpriseInvite',
+])
+
+// Models scoped to Channel (which belongs to an Enterprise)
+const CHANNEL_SCOPED_MODELS = new Set([
   'Purchase', 'PurchaseOrder',
-  'Expense',
+  'Expense', 'ExpenseCategory',
   'SalesSession', 'Sale',
   'StockMovement', 'StockTake',
   'Account', 'JournalEntry',
@@ -16,44 +28,22 @@ const ISOLATED_MODELS = new Set([
   'SalaryRun',
   'DeductionRule', 'AllowanceRule',
   'TaxConnectorConfig', 'DocumentTemplate',
-  'Notification', 'Setting',
+  'Setting',
   'CommissionRule', 'CommissionEntry', 'CommissionPayout',
   'Serial',
-  'Transfer',
   'SupportTicket', 'LoyaltyTransaction', 'CustomerPayment',
   'FixedAsset', 'UserTarget',
   'SyncConflict',
-  // AUDIT FIX: Previously unprotected — cross-channel data breach risk
-  'User',           // Users must only see/edit users in their channel
-  'BankDeposit',    // Deposits are per-channel financial records
-  'ManagerApproval', // Approval requests must not leak across channels
+  'BankDeposit',
+  'ManagerApproval',
+  'Invoice',
+  'RepairRequest',
+  'ServiceChecklist',
+  'Notification',
 ])
 
-// Models whose create() already receives an explicit channelId from the
-// service layer. Auto-injecting on create would be redundant/harmful.
-const CREATE_SKIP_INJECT = new Set([
-  'User',           // usersService always sets channelId explicitly
-  'ManagerApproval', // created with explicit channelId
-  'BankDeposit',    // created with explicit channelId
-])
-
-const GLOBAL_OPTIONAL_MODELS = new Set([
-  'Brand', 'Category', 'Supplier',
-  'DeductionRule', 'AllowanceRule',
-  'Setting',
-  'CommissionRule',
-])
-
-// Models that use fromChannelId/toChannelId instead of channelId.
-// These are isolated for READ/MUTATE but must NOT have channelId
-// auto-injected into create() data — they don't have that field.
 const DUAL_CHANNEL_MODELS = new Set([
   'Transfer',
-])
-
-// Models directly isolated at the Enterprise level
-const ENTERPRISE_MODELS = new Set([
-  'Channel', 'User', 'Item', 'AuditLog'
 ])
 
 const ADMIN_ROLES = new Set(['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'])
@@ -68,116 +58,90 @@ export const multiTenantExtension = Prisma.defineExtension((client) => {
 
           const castArgs = args as any
           const isPlatformOwner = ctx.role === 'PLATFORM_OWNER'
+          const enterpriseId = ctx.enterpriseId
 
-          // ── 1. Enterprise-Level Isolation ─────────────────────────────
-          // If the model belongs to an enterprise and user is not PLATFORM_OWNER,
-          // strictly enforce enterpriseId scoping on all operations.
-          if (ctx.enterpriseId && !isPlatformOwner && ENTERPRISE_MODELS.has(model)) {
-            const enterpriseId = ctx.enterpriseId
-
-            if (READ_OPS.has(operation) || MUTATE_OPS.has(operation)) {
-              castArgs.where = castArgs.where || {}
-              if (castArgs.where.enterpriseId === undefined) {
-                castArgs.where.enterpriseId = enterpriseId
-              }
-            } else if (WRITE_OPS.has(operation)) {
-              if (operation === 'create') {
-                castArgs.data = castArgs.data || {}
-                if (castArgs.data.enterpriseId === undefined) {
-                  castArgs.data.enterpriseId = enterpriseId
+          // ── 1. Enterprise-Level Fortress Isolation ──────────────────────
+          // When active in an enterprise context:
+          if (enterpriseId) {
+            // A. Direct Enterprise Models (Channel, User, Item, AuditLog, etc.)
+            if (ENTERPRISE_DIRECT_MODELS.has(model)) {
+              if (READ_OPS.has(operation) || MUTATE_OPS.has(operation)) {
+                castArgs.where = castArgs.where || {}
+                if (castArgs.where.enterpriseId === undefined) {
+                  castArgs.where.enterpriseId = enterpriseId
                 }
-              } else if (operation === 'createMany') {
-                if (Array.isArray(castArgs.data)) {
-                  castArgs.data = castArgs.data.map((row: any) =>
-                    row.enterpriseId !== undefined ? row : { ...row, enterpriseId }
-                  )
+              } else if (WRITE_OPS.has(operation)) {
+                if (operation === 'create') {
+                  castArgs.data = castArgs.data || {}
+                  if (castArgs.data.enterpriseId === undefined) {
+                    castArgs.data.enterpriseId = enterpriseId
+                  }
+                } else if (operation === 'createMany') {
+                  if (Array.isArray(castArgs.data)) {
+                    castArgs.data = castArgs.data.map((row: any) =>
+                      row.enterpriseId !== undefined ? row : { ...row, enterpriseId }
+                    )
+                  }
+                }
+              }
+            }
+
+            // B. Channel-Scoped Models (Sale, Account, Customer, Purchase, etc.)
+            else if (CHANNEL_SCOPED_MODELS.has(model)) {
+              if (READ_OPS.has(operation) || MUTATE_OPS.has(operation)) {
+                castArgs.where = castArgs.where || {}
+                // Ensure query is strictly bounded by enterprise-owned channels
+                if (castArgs.where.channel === undefined) {
+                  castArgs.where.channel = { enterpriseId }
+                } else if (typeof castArgs.where.channel === 'object' && castArgs.where.channel !== null) {
+                  castArgs.where.channel.enterpriseId = enterpriseId
+                }
+              }
+            }
+
+            // C. Dual-Channel Models (Transfer)
+            else if (DUAL_CHANNEL_MODELS.has(model)) {
+              if (READ_OPS.has(operation) || MUTATE_OPS.has(operation)) {
+                castArgs.where = castArgs.where || {}
+                if (castArgs.where.OR === undefined && castArgs.where.fromChannel === undefined && castArgs.where.toChannel === undefined) {
+                  castArgs.where.OR = [
+                    { fromChannel: { enterpriseId } },
+                    { toChannel:   { enterpriseId } },
+                  ]
                 }
               }
             }
           }
 
-          // ── 2. Channel-Level Isolation ────────────────────────────────
-          const skipChannel = !ctx.channelId || ADMIN_ROLES.has(ctx.role || '') || !ISOLATED_MODELS.has(model)
+          // ── 2. Staff Channel-Level Isolation (Non-Admins) ───────────────
+          const skipChannel = !ctx.channelId || ADMIN_ROLES.has(ctx.role || '') || !CHANNEL_SCOPED_MODELS.has(model)
           if (skipChannel) {
             return query(args)
           }
 
           const channelId = ctx.channelId
 
-          // ── READ operations ──────────────────────────────────────────
           if (READ_OPS.has(operation)) {
-            // FIX: Transfer uses fromChannelId/toChannelId — handle before
-            // standard channelId injection so it never gets channelId filter
-            if (DUAL_CHANNEL_MODELS.has(model)) {
-              castArgs.where = castArgs.where || {}
-              if (
-                castArgs.where.OR        === undefined &&
-                castArgs.where.fromChannelId === undefined &&
-                castArgs.where.toChannelId   === undefined
-              ) {
-                castArgs.where.OR = [
-                  { fromChannelId: channelId },
-                  { toChannelId:   channelId },
-                ]
-              }
-              return query(args)
-            }
-
             castArgs.where = castArgs.where || {}
-            if (castArgs.where.channelId === undefined && castArgs.where.OR === undefined) {
-              if (GLOBAL_OPTIONAL_MODELS.has(model)) {
-                castArgs.where.OR = [{ channelId }, { channelId: null }]
-              } else {
-                castArgs.where.channelId = channelId
-              }
+            if (castArgs.where.channelId === undefined && castArgs.where.channel?.id === undefined) {
+              castArgs.where.channelId = channelId
             }
-          }
-
-          // ── WRITE operations ─────────────────────────────────────────
-          else if (WRITE_OPS.has(operation)) {
-            // FIX: DUAL_CHANNEL_MODELS (Transfer) must NOT get channelId
-            // injected — they don't have that column. fromChannelId and
-            // toChannelId are set explicitly by the service.
-            if (DUAL_CHANNEL_MODELS.has(model)) {
-              return query(args)
-            }
-
+          } else if (WRITE_OPS.has(operation)) {
             if (operation === 'create') {
               castArgs.data = castArgs.data || {}
-              // Only inject channelId if not already set AND this model doesn't
-              // manage its own channelId in the service layer
-              if (castArgs.data.channelId === undefined && !CREATE_SKIP_INJECT.has(model)) {
+              if (castArgs.data.channelId === undefined) {
                 castArgs.data.channelId = channelId
               }
             } else if (operation === 'createMany') {
-              if (Array.isArray(castArgs.data) && !CREATE_SKIP_INJECT.has(model)) {
+              if (Array.isArray(castArgs.data)) {
                 castArgs.data = castArgs.data.map((row: any) =>
                   row.channelId !== undefined ? row : { ...row, channelId }
                 )
               }
             }
-          }
-
-          // ── MUTATE operations ────────────────────────────────────────
-          else if (MUTATE_OPS.has(operation)) {
-            // Transfer: scope updates to channels this user is party to
-            if (DUAL_CHANNEL_MODELS.has(model)) {
-              castArgs.where = castArgs.where || {}
-              if (
-                castArgs.where.OR            === undefined &&
-                castArgs.where.fromChannelId === undefined &&
-                castArgs.where.toChannelId   === undefined
-              ) {
-                castArgs.where.OR = [
-                  { fromChannelId: channelId },
-                  { toChannelId:   channelId },
-                ]
-              }
-              return query(args)
-            }
-
+          } else if (MUTATE_OPS.has(operation)) {
             castArgs.where = castArgs.where || {}
-            if (castArgs.where.channelId === undefined) {
+            if (castArgs.where.channelId === undefined && castArgs.where.channel?.id === undefined) {
               castArgs.where.channelId = channelId
             }
           }

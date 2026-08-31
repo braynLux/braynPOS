@@ -1,33 +1,87 @@
 import type { FastifyPluginAsync } from 'fastify'
-import { NotificationService } from './notifications.service.js'
+import { basePrisma as prisma } from '../../lib/prisma.js'
 import { authenticate } from '../../middleware/authenticate.js'
+import { authorize } from '../../middleware/authorize.js'
+import { BillingService } from '../enterprises/billing.service.js'
 import { z } from 'zod'
 
-const GLOBAL_NOTIFICATION_ROLES = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
-
-export const notificationRoutes: FastifyPluginAsync = async (app) => {
+export const systemNotificationsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
-  // Get notification history
+  // GET /notifications — Fetch notifications for current user/enterprise/platform owner
   app.get('/', async (request) => {
-    const { page, limit } = z.object({
-      page: z.coerce.number().int().min(1).default(1),
-      limit: z.coerce.number().int().min(1).max(100).default(20),
-    }).parse(request.query)
+    const isPlatformOwner = request.user.role === 'PLATFORM_OWNER'
+    const enterpriseId = request.user.enterpriseId
 
-    const isGlobalRole = GLOBAL_NOTIFICATION_ROLES.includes(request.user.role)
-    const channelId = isGlobalRole ? undefined : request.user.channelId
-
-    if (!isGlobalRole && !channelId) {
-      throw { statusCode: 400, message: 'Your account has no channel assigned' }
+    const where: any = {}
+    if (isPlatformOwner && !enterpriseId) {
+      // Platform Owner gets global notifications (enterpriseId IS NULL)
+      where.enterpriseId = null
+    } else if (enterpriseId) {
+      // Tenant user gets notifications for their enterprise
+      where.enterpriseId = enterpriseId
     }
 
-    return NotificationService.getHistory(channelId, page, limit)
+    const [notifications, unreadCount] = await Promise.all([
+      prisma.systemNotification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      prisma.systemNotification.count({
+        where: {
+          ...where,
+          isRead: false,
+        },
+      }),
+    ])
+
+    return {
+      notifications,
+      unreadCount,
+    }
   })
 
-  // Mark as read
-  app.post('/:id/read', async (request) => {
+  // PATCH /notifications/:id/read — Mark single notification as read
+  app.patch('/:id/read', async (request) => {
     const { id } = request.params as { id: string }
-    return NotificationService.markAsRead(id, request.user.role, request.user.channelId)
+    const updated = await prisma.systemNotification.update({
+      where: { id },
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    })
+    return { message: 'Notification marked as read', notification: updated }
+  })
+
+  // POST /notifications/read-all — Mark all notifications as read in scope
+  app.post('/read-all', async (request) => {
+    const isPlatformOwner = request.user.role === 'PLATFORM_OWNER'
+    const enterpriseId = request.user.enterpriseId
+
+    const where: any = { isRead: false }
+    if (isPlatformOwner && !enterpriseId) {
+      where.enterpriseId = null
+    } else if (enterpriseId) {
+      where.enterpriseId = enterpriseId
+    }
+
+    await prisma.systemNotification.updateMany({
+      where,
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    })
+
+    return { message: 'All notifications marked as read' }
+  })
+
+  // POST /notifications/evaluate — Trigger subscription lifecycle & notification check
+  app.post('/evaluate', {
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN')],
+  }, async () => {
+    return BillingService.evaluateSubscriptionsAndNotify()
   })
 }

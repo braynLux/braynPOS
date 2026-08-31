@@ -51,7 +51,7 @@ export async function managerApproveRoutes(app: FastifyInstance) {
   }, async (request, reply) => {
     const { action, pin, contextId, channelId } = ApproveSchema.parse(request.body)
     const actor = request.user
-    const isGlobalActor = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(actor.role)
+    const isGlobalActor = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(actor.role)
     if (!isGlobalActor && actor.channelId !== channelId) {
       return reply.status(403).send({ error: 'You can only request approvals for your assigned channel' })
     }
@@ -64,30 +64,31 @@ export async function managerApproveRoutes(app: FastifyInstance) {
 
     let approverRoles: string[] = []
     if (isAdminOnly) {
-      approverRoles = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
+      approverRoles = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
     } else if (isCustomerDelete) {
       approverRoles = actor.channelId
-        ? ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
-        : ['MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
+        ? ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN', 'PLATFORM_OWNER']
+        : ['MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN', 'PLATFORM_OWNER']
     } else if (action === 'negative_margin' && typeof (request.body as any).marginPercent === 'number') {
       const margin = (request.body as any).marginPercent
 
       // Audit finding: Stepped Authority
       // Floor Managers can authorize down to -5% margin.
-      // Anything deeper requires MANAGER_ADMIN, ADMIN or SUPER_ADMIN.
+      // Anything deeper requires MANAGER_ADMIN, ADMIN, SUPER_ADMIN or PLATFORM_OWNER.
       if (margin < -5) {
-        approverRoles = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
+        approverRoles = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN']
       } else {
-        approverRoles = ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
+        approverRoles = ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN', 'PLATFORM_OWNER']
       }
     } else {
-      approverRoles = ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN']
+      approverRoles = ['MANAGER', 'MANAGER_ADMIN', 'ADMIN', 'SUPER_ADMIN', 'PLATFORM_OWNER']
     }
 
     const where: any = {
       role:      { in: approverRoles },
       status:    'ACTIVE',
       deletedAt: null,
+      ...(actor.enterpriseId && { enterpriseId: actor.enterpriseId }),
     }
     if (!isAdminOnly) {
       where.channelId = channelId
@@ -122,14 +123,15 @@ export async function managerApproveRoutes(app: FastifyInstance) {
     }, 120)
 
     logAction({
-      action:    AUDIT.MANAGER_APPROVAL,
-      actorId:   actor.sub,
-      actorRole: actor.role,
+      action:       AUDIT.MANAGER_APPROVAL,
+      actorId:      actor.sub,
+      actorRole:    actor.role,
+      enterpriseId: actor.enterpriseId ?? undefined,
       approverId,
       channelId,
-      targetType: 'action',
-      targetId:   contextId,
-      newValues: { approvedAction: action },
+      targetType:   'action',
+      targetId:     contextId,
+      newValues:    { approvedAction: action },
     })
 
     return reply.send({ approvalToken, expiresInSeconds: 120 })
@@ -148,7 +150,7 @@ export async function validateApprovalToken(
 
   if (parsed.action !== action || parsed.contextId !== contextId) return null
 
-  // ── FIX: Enforce channelId match if caller provides it ───────────
+  // ── Enforce channelId match if caller provides it ───────────
   if (expectedChannelId && parsed.channelId !== expectedChannelId) return null
 
   // Consume token — one-time use

@@ -3,16 +3,18 @@ import { accountsService } from './accounts.service.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { requireMfa } from '../../middleware/require-mfa.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { z } from 'zod'
 
-const HQ_ACCOUNT_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_ACCOUNT_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const accountsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requirePlanFeature('accounting'))
 
   // GET /accounting/accounts — chart of accounts (hierarchical tree)
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const isHQ = HQ_ACCOUNT_ROLES.includes(request.user.role)
     if (!isHQ && !request.user.channelId) {
@@ -23,7 +25,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /accounting/accounts/:id
   app.get('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const isHQ = HQ_ACCOUNT_ROLES.includes(request.user.role)
@@ -35,7 +37,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /accounting/accounts — requires MFA
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER'), requireMfa],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER'), requireMfa],
   }, async (request, reply) => {
     const body = z.object({
       code: z.string().min(1).max(20),
@@ -57,7 +59,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /accounting/accounts/:id — requires MFA
   app.patch('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER'), requireMfa],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER'), requireMfa],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const body = z.object({

@@ -27,7 +27,8 @@ export const CreateInviteSchema = z.object({
 })
 
 export const UpdatePlanSchema = z.object({
-  plan: z.enum(['STARTER', 'PRO', 'ENTERPRISE']),
+  plan:         z.enum(['STARTER', 'PRO', 'ENTERPRISE']),
+  planFeatures: z.record(z.any()).optional(),
 })
 
 export type OnboardEnterpriseInput = z.infer<typeof OnboardEnterpriseSchema>

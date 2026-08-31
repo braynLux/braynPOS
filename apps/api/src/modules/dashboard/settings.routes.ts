@@ -4,7 +4,7 @@ import { authenticate } from '../../middleware/authenticate.js'
 import { authorize } from '../../middleware/authorize.js'
 import { z } from 'zod'
 
-const GLOBAL_SETTINGS_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const GLOBAL_SETTINGS_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const settingsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -16,7 +16,7 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /settings - Bulk update settings for the channel
   app.patch('/settings', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const body = z.record(z.any()).parse(request.body)
     const isGlobalSettingsRole = GLOBAL_SETTINGS_ROLES.includes(request.user.role)
@@ -37,7 +37,7 @@ export const settingsRoutes: FastifyPluginAsync = async (app) => {
 
   // PUT /settings/:key - Update specific setting
   app.put('/settings/:key', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { key } = request.params as { key: string }
     const { value } = z.object({ value: z.any() }).parse(request.body)

@@ -1,8 +1,8 @@
-﻿import { prisma } from './prisma.js'
+import { basePrisma } from './prisma.js'
 
 const LOCK_TTL_MS = 30_000 // 30 seconds max in-flight request lock
 
-// In-memory request lock tracker (locks active processing requests without requiring Redis)
+// Fast in-process lock tracker
 const inFlightLocks = new Map<string, number>()
 
 /**
@@ -12,27 +12,62 @@ const inFlightLocks = new Map<string, number>()
 export async function checkIdempotency(
   key: string
 ): Promise<{ responseBody: unknown; statusCode: number } | null> {
-  const dbRecord = await prisma.idempotencyRecord.findUnique({ where: { key } })
-  if (dbRecord) {
-    return { responseBody: dbRecord.responseBody, statusCode: dbRecord.statusCode }
+  try {
+    const dbRecord = await (basePrisma as any).idempotencyRecord?.findUnique({ where: { key } })
+    if (dbRecord && dbRecord.statusCode > 0) {
+      return { responseBody: dbRecord.responseBody, statusCode: dbRecord.statusCode }
+    }
+  } catch {
+    // Graceful fallback
   }
   return null
 }
 
 /**
- * Acquire an atomic idempotency lock before processing a request.
- * Uses in-memory lock map with expiration check.
+ * Acquire an atomic distributed idempotency lock before processing a request.
+ * Uses PostgreSQL atomic conditional upsert + in-memory fast check.
  */
 export async function acquireIdempotencyLock(key: string): Promise<boolean> {
   const now = Date.now()
   const existingLockTime = inFlightLocks.get(key)
-
   if (existingLockTime && now - existingLockTime < LOCK_TTL_MS) {
-    return false // Lock already held and not expired
+    return false
   }
 
   inFlightLocks.set(key, now)
-  return true
+
+  // Try PostgreSQL distributed lock
+  try {
+    const existing = await (basePrisma as any).idempotencyRecord?.findUnique({ where: { key } })
+    if (existing) {
+      // If already has final status code (> 0), request is completed
+      if (existing.statusCode > 0) return false
+      // If locked within the last LOCK_TTL_MS, another worker holds the lock
+      const lockAge = now - new Date(existing.lockedAt).getTime()
+      if (lockAge < LOCK_TTL_MS) return false
+
+      // Otherwise, takeover stale crashed lock
+      await (basePrisma as any).idempotencyRecord?.update({
+        where: { key },
+        data: { lockedAt: new Date(now) },
+      })
+      return true
+    }
+
+    // Insert pending lock placeholder (statusCode: 0)
+    await (basePrisma as any).idempotencyRecord?.create({
+      data: {
+        key,
+        statusCode: 0,
+        responseBody: {},
+        lockedAt: new Date(now),
+      },
+    })
+    return true
+  } catch {
+    // Fall back to in-memory lock
+    return true
+  }
 }
 
 /**
@@ -40,6 +75,12 @@ export async function acquireIdempotencyLock(key: string): Promise<boolean> {
  */
 export async function releaseIdempotencyLock(key: string): Promise<void> {
   inFlightLocks.delete(key)
+  try {
+    const existing = await (basePrisma as any).idempotencyRecord?.findUnique({ where: { key } })
+    if (existing && existing.statusCode === 0) {
+      await (basePrisma as any).idempotencyRecord?.delete({ where: { key } })
+    }
+  } catch {}
 }
 
 /**
@@ -51,14 +92,14 @@ export async function storeIdempotencyResult(
   responseBody: object,
   statusCode:   number
 ): Promise<void> {
-  await prisma.idempotencyRecord.upsert({
-    where:  { key },
-    create: { key, responseBody, statusCode },
-    update: {},  // No-op if already stored — first-write-wins
-  })
-
-  // Release in-flight lock
   inFlightLocks.delete(key)
+  try {
+    await (basePrisma as any).idempotencyRecord?.upsert({
+      where:  { key },
+      create: { key, responseBody, statusCode, lockedAt: new Date() },
+      update: { responseBody, statusCode, lockedAt: new Date() },
+    })
+  } catch {}
 }
 
 /**

@@ -68,8 +68,11 @@ export class AuthService {
     return { requiresMfa: false, accessToken, refreshToken, user: this.sanitizeUser(user) }
   }
 
-  // ── Register ──────────────────────────────────────────────────────────
-  async register(input: RegisterInput) {
+  // ── Register (Internal / Provisioned only) ────────────────────────────
+  async register(input: RegisterInput & { enterpriseId?: string }) {
+    if (!input.enterpriseId) {
+      throw { statusCode: 400, message: 'enterpriseId is required to register a user. Use enterprise invite onboarding or staff creation.' }
+    }
     const existing = await prisma.$queryRaw<Array<{ id: string }>>`
       SELECT id FROM users WHERE email = ${input.email} OR username = ${input.username} LIMIT 1
     `
@@ -80,10 +83,17 @@ export class AuthService {
 
     const passwordHash = await hashPassword(input.password)
     const user = await prisma.user.create({
-      data: { username: input.username, email: input.email, passwordHash, role: input.role, channelId: input.channelId ?? null },
+      data: {
+        username:     input.username,
+        email:        input.email,
+        passwordHash,
+        role:         input.role,
+        channelId:    input.channelId ?? null,
+        enterpriseId: input.enterpriseId,
+      },
     })
 
-    authLogger.info({ userId: user.id, email: user.email, role: user.role }, 'user registered')
+    authLogger.info({ userId: user.id, email: user.email, role: user.role, enterpriseId: user.enterpriseId }, 'user registered')
     return this.sanitizeUser(user)
   }
 
@@ -204,7 +214,7 @@ export class AuthService {
   // ── Get profile ────────────────────────────────────────────────────────
   async getProfile(userId: string) {
     const user = await prisma.user.findUniqueOrThrow({
-      where: { id: userId }, include: { channel: true, staffProfile: true },
+      where: { id: userId }, include: { channel: true, enterprise: true, staffProfile: true },
     })
     return this.sanitizeUser(user)
   }

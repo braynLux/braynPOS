@@ -14,6 +14,7 @@ import { logAction, AUDIT } from '../../lib/audit.js'
 import type { TokenPayload } from '../../lib/jwt.js'
 import { verifyPassword } from '../../lib/password.js'
 import { randomBytes } from 'crypto'
+import { requestContext } from '../../lib/request-context.plugin.js'
 
 const inFlightCommits = new Map<string, number>()
 const IN_FLIGHT_TTL_MS = 10_000
@@ -50,6 +51,21 @@ async function generateReceiptNo(
   } catch { }
   const ts = process.hrtime.bigint().toString().slice(-8)
   return `RCP-${dateStr}-${ts}-${suffix}`
+}
+
+function sanitizeDeviceDate(deviceDate?: string | Date | null): Date | null {
+  if (!deviceDate) return null
+  const parsed = new Date(deviceDate)
+  if (isNaN(parsed.getTime())) return null
+
+  const now = Date.now()
+  const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000
+  const twentyFourHoursAhead = now + 24 * 60 * 60 * 1000
+
+  if (parsed.getTime() < thirtyDaysAgo || parsed.getTime() > twentyFourHoursAhead) {
+    return new Date(now)
+  }
+  return parsed
 }
 
 async function commitSaleOnce(
@@ -161,14 +177,16 @@ async function commitSaleOnce(
         throw { statusCode: 422, message: `Insufficient stock for ${item.name}. Requested: ${requestedQty}, available: ${currentQty}` }
       }
 
-      if (Number(line.unitPrice) < Number(item.minRetailPrice)) {
-        if (!hasRole(actor, 'MANAGER')) {
-          if (!options?.approvalToken) {
-            throw { statusCode: 403, message: `Price below minimum for ${item.name} requires manager approval` }
-          }
-          const approval = await validateApprovalToken(options.approvalToken, 'price_below_min', line.itemId)
-          if (!approval) throw { statusCode: 403, message: `Invalid or expired approval token for ${item.name}` }
+      const minAllowedPrice = input.saleType === 'WHOLESALE'
+        ? Number(item.wholesalePrice || item.retailPrice || 0)
+        : Number(item.retailPrice || 0)
+
+      if (minAllowedPrice > 0 && Number(line.unitPrice) < minAllowedPrice) {
+        if (!options?.approvalToken) {
+          throw { statusCode: 403, message: `Price (KES ${Number(line.unitPrice).toLocaleString()}) for ${item.name} is below configured ${input.saleType.toLowerCase()} price (KES ${minAllowedPrice.toLocaleString()}) and requires manager approval` }
         }
+        const approval = await validateApprovalToken(options.approvalToken, 'price_below_min', line.itemId)
+        if (!approval) throw { statusCode: 403, message: `Invalid or expired approval token for ${item.name}` }
         logAction({
           action:     AUDIT.PRICE_BELOW_MIN,
           actorId:    actor.sub,
@@ -176,8 +194,8 @@ async function commitSaleOnce(
           channelId:  input.channelId,
           targetType: 'Item',
           targetId:   line.itemId,
-          oldValues:  { minRetailPrice: item.minRetailPrice },
-          })
+          oldValues:  { minAllowedPrice, saleType: input.saleType },
+        })
       }
 
       // ── Audit Finding: Margin Guard (Prevent Sales Below Cost) ──
@@ -247,6 +265,35 @@ async function commitSaleOnce(
       }
     }
 
+    // ── Customer Credit Limit Validation ──
+    if ((input.saleType === 'CREDIT' || input.payments.some(p => p.method === 'CREDIT')) && input.customerId) {
+      const customer = await tx.customer.findUnique({
+        where: { id: input.customerId },
+        select: { id: true, name: true, creditLimit: true, outstandingCredit: true },
+      })
+      if (customer) {
+        const creditLimit = Number(customer.creditLimit ?? 0)
+        const currentOutstanding = Number(customer.outstandingCredit ?? 0)
+        const newBalance = currentOutstanding + netAmount
+
+        if (creditLimit > 0 && newBalance > creditLimit) {
+          if (!hasRole(actor, 'MANAGER')) {
+            if (!options?.approvalToken) {
+              throw {
+                statusCode: 403,
+                code: 'CREDIT_LIMIT_EXCEEDED',
+                message: `Credit limit exceeded for ${customer.name}. Current: KES ${currentOutstanding.toLocaleString()}, Limit: KES ${creditLimit.toLocaleString()}, Sale: KES ${netAmount.toLocaleString()}`,
+              }
+            }
+            const approval = await validateApprovalToken(options.approvalToken, 'credit_limit_exceeded', customer.id, input.channelId)
+            if (!approval) {
+              throw { statusCode: 403, message: `Invalid or expired approval token for credit limit override on ${customer.name}` }
+            }
+          }
+        }
+      }
+    }
+
     const newSale = await tx.sale.create({
       data: {
         receiptNo,
@@ -261,7 +308,7 @@ async function commitSaleOnce(
         performedBy:      input.promoterId || actor.sub,
         offlineReceiptNo: options?.offlineReceiptNo ?? null,
         notes:            input.notes ?? null,
-        deviceDate:       options?.deviceDate ? new Date(options.deviceDate) : null,
+        deviceDate:       sanitizeDeviceDate(options?.deviceDate),
         dueDate:          input.dueDate ? new Date(input.dueDate) : null,
       },
     })
@@ -469,7 +516,7 @@ export async function findSales(query: any, actor?: TokenPayload) {
     } : {}),
   }
 
-  const [data, total, aggStats] = await Promise.all([
+  const [data, aggStats] = await Promise.all([
     prisma.sale.findMany({
       where, skip, take: limit,
       orderBy: { createdAt: 'desc' },
@@ -479,9 +526,9 @@ export async function findSales(query: any, actor?: TokenPayload) {
         customer: { select: { id: true, name: true, phone: true } },
       },
     }),
-    prisma.sale.count({ where }),
-    prisma.sale.aggregate({ where, _sum: { totalAmount: true } }),
+    prisma.sale.aggregate({ where, _count: true, _sum: { totalAmount: true } }),
   ])
+  const total = aggStats._count ?? 0
 
   // Margin reporting
   //
@@ -495,12 +542,19 @@ export async function findSales(query: any, actor?: TokenPayload) {
   // while the margin beside them stayed computed over every sale in the
   // channel. Filtering to one customer showed that customer's revenue next to
   // the whole channel's margin, making margin look wildly larger than revenue.
+  const enterpriseId = requestContext.getStore()?.enterpriseId
+  const channelScopeSql = where.channelId
+    ? Prisma.sql`AND s."channelId" = ${where.channelId}`
+    : enterpriseId
+    ? Prisma.sql`AND s."channelId" IN (SELECT id FROM channels WHERE "enterpriseId" = ${enterpriseId} AND "deletedAt" IS NULL)`
+    : Prisma.empty
+
   const marginRes = await prisma.$queryRaw<any[]>`
     SELECT COALESCE(SUM("lineTotal" - ("costPriceSnapshot" * "quantity")), 0) as "margin"
     FROM   "sale_items" si
     JOIN   "sales" s ON si."saleId" = s.id
     WHERE  s."deletedAt" IS NULL
-    ${where.channelId ? Prisma.sql`AND s."channelId" = ${where.channelId}` : Prisma.sql``}
+    ${channelScopeSql}
     ${query.performedBy ? Prisma.sql`AND s."performedBy" = ${query.performedBy}` : Prisma.sql``}
     ${query.saleType ? Prisma.sql`AND s."saleType"::text = ${query.saleType}` : Prisma.sql``}
     ${query.customerId ? Prisma.sql`AND s."customerId" = ${query.customerId}` : Prisma.sql``}

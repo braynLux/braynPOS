@@ -53,7 +53,7 @@ export class SessionsService {
     }
 
     const isOwner   = session.userId === actorId
-    const isManager = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(actorRole)
+    const isManager = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(actorRole)
     if (!isOwner && !isManager) {
       throw { statusCode: 403, message: 'You can only close your own session' }
     }

@@ -9,7 +9,7 @@ import { authorize }    from '../../middleware/authorize.js'
 import { z }            from 'zod'
 import { RATE }         from '../../lib/rate-limit.plugin.js'
 
-const HQ_SALES_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_SALES_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 const optionalUuid = z.preprocess((value) => value === '' ? undefined : value, z.string().uuid().optional())
 const nullableUuid = z.preprocess((value) => value === '' ? null : value, z.string().uuid().nullable().optional())
 
@@ -58,7 +58,7 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER', 'STOREKEEPER'
     )],
   }, async (request) => {
@@ -79,7 +79,7 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:id', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER', 'STOREKEEPER'
     )],
   }, async (request, reply) => {
@@ -104,7 +104,7 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/:id/items', {
     config:     RATE.READ,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER', 'STOREKEEPER'
     )],
   }, async (request, reply) => {
@@ -126,7 +126,7 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/commit', {
     config:     RATE.SALE_COMMIT,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER'
     )],
   }, async (request, reply) => {
@@ -159,7 +159,7 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   app.post('/sync-offline', {
     config:     RATE.OFFLINE_SYNC,
     preHandler: [authorize(
-      'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
+      'PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER',
       'CASHIER', 'SALES_PERSON', 'PROMOTER'
     )],
   }, async (request, reply) => {
@@ -190,7 +190,7 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   // ── Reverse (void) a sale ───────────────────────────────────────────
   app.post('/:id/reverse', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id }       = z.object({ id: z.string().uuid() }).parse(request.params)
     // FIX (from critical phase): use request.user.sub not request.user.id
@@ -198,9 +198,67 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
     return reverseSale(id, request.user.sub, password)
   })
 
+  // ── Suspended Sales / Held Carts ────────────────────────────────────
+  app.post('/suspend', {
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+  }, async (request, reply) => {
+    const body = z.object({
+      channelId:    optionalUuid,
+      customerData: z.any().optional(),
+      cartData:     z.any(),
+      notes:        z.string().max(500).optional(),
+    }).parse(request.body)
+
+    let cid = body.channelId || request.user.channelId
+    if (!HQ_SALES_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      cid = request.user.channelId
+    }
+    if (!cid) throw { statusCode: 400, message: 'channelId is required to suspend sale' }
+
+    const suspended = await salesService.suspendSale(cid, request.user.sub, body as any)
+    reply.status(201).send(suspended)
+  })
+
+  app.get('/suspended', {
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+  }, async (request) => {
+    const { channelId } = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
+    let cid = channelId || request.user.channelId
+    if (!HQ_SALES_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      cid = request.user.channelId
+    }
+    if (!cid) throw { statusCode: 400, message: 'channelId is required to list suspended sales' }
+
+    const userId = ['CASHIER', 'SALES_PERSON'].includes(request.user.role) ? request.user.sub : undefined
+    return salesService.findSuspendedSales(cid, userId)
+  })
+
+  app.post('/suspended/:id/resume', {
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+  }, async (request) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
+    const { channelId } = z.object({ channelId: z.string().uuid().optional() }).parse(request.body ?? {})
+    let cid = channelId || request.user.channelId
+    if (!HQ_SALES_ROLES.includes(request.user.role)) {
+      if (!request.user.channelId) {
+        throw { statusCode: 400, message: 'Your account has no channel assigned' }
+      }
+      cid = request.user.channelId
+    }
+    if (!cid) throw { statusCode: 400, message: 'channelId is required to resume suspended sale' }
+
+    return salesService.resumeSale(id, cid)
+  })
+
   // ── Sync Conflicts ─────────────────────────────────────────────────
   app.get('/conflicts', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
     handler: async (request) => {
       const { channelId } = z.object({ channelId: z.string().uuid().optional() }).parse(request.query)
       let cid = channelId || request.user.channelId
@@ -219,7 +277,7 @@ export const salesRoutes: FastifyPluginAsync = async (app) => {
   })
 
   app.post('/conflicts/:id/resolve', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
     handler: async (request) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(request.params)
       const body = resolveConflictSchema.parse(request.body)

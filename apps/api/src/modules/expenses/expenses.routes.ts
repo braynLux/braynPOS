@@ -6,7 +6,7 @@ import { RATE }            from '../../lib/rate-limit.plugin.js'
 import { prisma }          from '../../lib/prisma.js'
 import { z }               from 'zod'
 
-const HQ_EXPENSE_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_EXPENSE_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const expensesRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -14,7 +14,7 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // GET /expenses
   app.get('/', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional(),
@@ -39,7 +39,7 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // Expense records contain amount, description, and channel data.
   app.get('/:id', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }    = request.params as { id: string }
     const isHQ      = HQ_EXPENSE_ROLES.includes(request.user.role)
@@ -59,7 +59,7 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // POST /expenses
   app.post('/', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
       channelId:   z.string().uuid(),
@@ -87,7 +87,7 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // DELETE /expenses/:id
   app.delete('/:id', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }            = request.params as { id: string }
     const { approvalToken } = z.object({ approvalToken: z.string().optional() }).parse(request.body || {})
@@ -134,7 +134,7 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // GET /expenses/categories — shared, team-wide category list
   app.get('/categories', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const isHQ = HQ_EXPENSE_ROLES.includes(request.user.role)
     return prisma.expenseCategory.findMany({
@@ -146,7 +146,7 @@ export const expensesRoutes: FastifyPluginAsync = async (app) => {
   // POST /expenses/categories
   app.post('/categories', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { name } = z.object({ name: z.string().min(1).max(100) }).parse(request.body)
     const isHQ = HQ_EXPENSE_ROLES.includes(request.user.role)

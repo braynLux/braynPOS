@@ -5,19 +5,19 @@ import { authorize } from '../../middleware/authorize.js'
 import { RATE } from '../../lib/rate-limit.plugin.js'
 import { z } from 'zod'
 
-const HQ_STOCK_TAKE_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_STOCK_TAKE_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const stockTakeRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
 
   // POST /api/v1/stock/take
   app.post('/', {
-    preHandler: [authorize('MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')]
+    preHandler: [authorize('PLATFORM_OWNER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')]
   }, async (request) => {
     const { channelId } = z.object({
       channelId: z.string().uuid()
     }).parse(request.body)
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(request.user.role) && channelId !== request.user.channelId) {
+    if (!HQ_STOCK_TAKE_ROLES.includes(request.user.role) && channelId !== request.user.channelId) {
       throw { statusCode: 403, message: 'You can only start stock takes for your assigned channel' }
     }
     
@@ -27,7 +27,7 @@ export const stockTakeRoutes: FastifyPluginAsync = async (app) => {
   // GET /api/v1/stock/take
   app.get('/', {
     config: RATE.STOCK_READ,
-    preHandler: [authorize('STOREKEEPER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'STOREKEEPER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')],
   }, async (request) => {
     const query = z.object({
       channelId: z.string().uuid().optional()
@@ -47,7 +47,7 @@ export const stockTakeRoutes: FastifyPluginAsync = async (app) => {
   // GET /api/v1/stock/take/:id
   app.get('/:id', {
     config: RATE.STOCK_READ,
-    preHandler: [authorize('STOREKEEPER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'STOREKEEPER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const take = await stockTakeService.getTakeDetails(id, request.user.role)
@@ -59,7 +59,7 @@ export const stockTakeRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /api/v1/stock/take/:id/record
   app.post('/:id/record', {
-    preHandler: [authorize('STOREKEEPER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')]
+    preHandler: [authorize('PLATFORM_OWNER', 'STOREKEEPER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')]
   }, async (request) => {
     const { id } = request.params as { id: string }
     const { itemId, recordedQty } = z.object({
@@ -76,7 +76,7 @@ export const stockTakeRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /api/v1/stock/take/:id/complete
   app.post('/:id/complete', {
-    preHandler: [authorize('MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')]
+    preHandler: [authorize('PLATFORM_OWNER', 'MANAGER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')]
   }, async (request) => {
     const { id } = request.params as { id: string }
     const take = await stockTakeService.getTakeDetails(id, request.user.role)

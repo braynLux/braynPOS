@@ -1,6 +1,8 @@
 import { prisma } from '../../lib/prisma.js'
 import type { SerialStatus } from '@prisma/client'
  
+const HQ_SERIAL_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+
 export class SerialsService {
   async findByItem(itemId: string, channelId?: string) {
     return prisma.serial.findMany({
@@ -21,7 +23,7 @@ export class SerialsService {
     }
  
     // Role-based filtering
-    if (!['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(requestingUser.role)) {
+    if (!HQ_SERIAL_ROLES.includes(requestingUser.role)) {
       if (!requestingUser.channelId) {
         throw { statusCode: 400, message: 'User is not assigned to a channel' }
       }
@@ -42,8 +44,8 @@ export class SerialsService {
   async findBySerialNo(serialNo: string, requestingUser?: { role: string; channelId: string | null }) {
     const where: any = { serialNo }
     
-    // If not admin/super_admin, restrict to user's channel if they have one
-    if (requestingUser && !['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN'].includes(requestingUser.role)) {
+    // If not admin/super_admin/platform_owner, restrict to user's channel if they have one
+    if (requestingUser && !HQ_SERIAL_ROLES.includes(requestingUser.role)) {
       if (!requestingUser.channelId) {
         throw { statusCode: 400, message: 'User is not assigned to a channel' }
       }

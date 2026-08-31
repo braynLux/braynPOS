@@ -6,14 +6,15 @@ import { z }               from 'zod'
 import { prisma }          from '../../lib/prisma.js'
 import { verifyPassword }  from '../../lib/password.js'
 import { validateApprovalToken } from '../auth/manager-approve.routes.js'
+import { assertChannelQuota }    from '../../middleware/plan-guard.js'
 
 const createChannelSchema = z.object({
-  name:           z.string().min(1),
-  code:           z.string().min(1).max(20),
+  name:           z.string().min(1, 'Channel name is required'),
+  code:           z.string().min(1, 'Channel code is required').max(20),
   type:           z.enum(['RETAIL_SHOP', 'WHOLESALE_SHOP', 'WAREHOUSE', 'ONLINE']),
   isMainWarehouse: z.boolean().optional(),
-  address:        z.string().optional(),
-  phone:          z.string().min(10).max(13).regex(/^[+0-9]+$/, 'Invalid phone number format'),
+  address:        z.string().optional().or(z.literal('')),
+  phone:          z.string().optional().or(z.literal('')),
   email:          z.string().email().optional().or(z.literal('')),
   featureFlags:   z.record(z.any()).optional(),
 })
@@ -35,45 +36,21 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
       'CASHIER', 'SALES_PERSON', 'STOREKEEPER', 'PROMOTER'
     )],
   }, async (request) => {
-    const { prisma: db } = await import('../../lib/prisma.js')
     const enterpriseId = request.user.enterpriseId
     const isPlatformOwner = request.user.role === 'PLATFORM_OWNER'
 
-    if (isPlatformOwner) {
-      return db.$queryRaw`
-        SELECT id, name, code, type, "isMainWarehouse",
-               address, phone, email, "featureFlags",
-               "enterpriseId", "createdAt", "updatedAt"
-        FROM   channels
-        WHERE  "deletedAt" IS NULL
-        ORDER  BY name ASC
-      `
-    }
-
-    if (!enterpriseId) {
-      return db.$queryRaw`
-        SELECT id, name, code, type, "isMainWarehouse",
-               address, phone, email, "featureFlags",
-               "enterpriseId", "createdAt", "updatedAt"
-        FROM   channels
-        WHERE  "deletedAt" IS NULL AND "enterpriseId" IS NULL
-        ORDER  BY name ASC
-      `
-    }
-
-    return db.$queryRaw`
-      SELECT id, name, code, type, "isMainWarehouse",
-             address, phone, email, "featureFlags",
-             "enterpriseId", "createdAt", "updatedAt"
-      FROM   channels
-      WHERE  "deletedAt" IS NULL AND "enterpriseId" = ${enterpriseId}
-      ORDER  BY name ASC
-    `
+    return prisma.channel.findMany({
+      where: {
+        deletedAt: null,
+        ...(isPlatformOwner && !enterpriseId ? {} : { enterpriseId: enterpriseId ?? null }),
+      },
+      orderBy: { name: 'asc' },
+    })
   })
 
   // GET /channels/:id
   app.get('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     if (request.user.role === 'MANAGER' && id !== request.user.channelId) {
@@ -84,8 +61,11 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /channels
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
+    // Enforce SaaS Subscription Plan Branch Quota
+    await assertChannelQuota(request.user.enterpriseId)
+
     const body              = createChannelSchema.parse(request.body)
     const { approvalToken } = z.object({ approvalToken: z.string().optional() }).parse(request.body)
 
@@ -115,13 +95,16 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
       if (!approved) return reply.status(403).send({ error: 'Invalid or expired Administrator Manager approval' })
     }
 
-    const channel = await channelsService.create(body)
+    const channel = await channelsService.create({
+      ...body,
+      enterpriseId: request.user.enterpriseId ?? null,
+    } as any)
     reply.status(201).send(channel)
   })
 
   // PATCH /channels/:id
   app.patch('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }            = request.params as { id: string }
     const body              = updateChannelSchema.parse(request.body)
@@ -157,7 +140,7 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
 
   // DELETE /channels/:id
   app.delete('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id }                   = request.params as { id: string }
     const { password, approvalToken } = z.object({

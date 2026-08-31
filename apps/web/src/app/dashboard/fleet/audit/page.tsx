@@ -77,7 +77,7 @@ export default function FleetAuditPage() {
             Cross-enterprise audit log — all tenant actions in one view
           </p>
         </div>
-        <Link href="/dashboard" className="btn btn-ghost btn-sm">← Back to Fleet Dashboard</Link>
+        <Link href="/dashboard/enterprises" className="btn btn-ghost btn-sm">← Back to Fleet HQ</Link>
       </div>
 
       {/* Filters */}

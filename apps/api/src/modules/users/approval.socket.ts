@@ -17,10 +17,9 @@ export function setupApprovalSocket(io: Server) {
     }
 
     try {
-      const decoded = verifyToken(token as string)
-      // Standardize on .id for internal use; many JWTs use .sub for the user ID
+      const decoded = verifyToken(token as string) as any
       const userId = decoded.id || decoded.sub
-      
+
       if (!userId) {
         logger.error({ token: 'provided' }, 'Token verified but contains no user ID (id/sub)')
         socket.disconnect()
@@ -28,19 +27,22 @@ export function setupApprovalSocket(io: Server) {
       }
 
       socket.data.user = { ...decoded, id: userId }
-      // Attach to socket root for raw compatibility if needed by emitters
-      ;(socket as any).userId = userId
-      
-      // Join a room based on role or channel for targeted alerts
-      if (decoded.role === 'SUPER_ADMIN' || decoded.role === 'MANAGER_ADMIN') {
-        socket.join('admins')
+      const enterpriseId = decoded.enterpriseId
+      const channelId = decoded.channelId
+
+      if (enterpriseId) {
+        if (decoded.role === 'SUPER_ADMIN' || decoded.role === 'MANAGER_ADMIN' || decoded.role === 'ADMIN') {
+          socket.join(`enterprise:${enterpriseId}:admins`)
+        }
+        if (channelId) {
+          socket.join(`enterprise:${enterpriseId}:channel:${channelId}`)
+        }
+      } else if (decoded.role === 'PLATFORM_OWNER') {
+        socket.join('platform:owners')
       }
-      if (decoded.channelId) {
-        socket.join(`channel:${decoded.channelId}`)
-      }
-      
-      logger.debug({ username: decoded.username, role: decoded.role }, 'Approval socket connected')
-    } catch (err) {
+
+      logger.debug({ username: decoded.username, role: decoded.role, enterpriseId }, 'Approval socket connected')
+    } catch {
       socket.disconnect()
       return
     }
@@ -50,16 +52,30 @@ export function setupApprovalSocket(io: Server) {
     })
   })
 
-  // Listen to Domain Events and broadcast to relevant rooms
-  eventBus.on('approval.requested', (data) => {
-    logger.debug({ approvalId: data.approvalId }, '[ApprovalSocket] Broadcasting request')
-    
-    // Notify all admins
-    approvalNamespace.to('admins').emit('new_approval_request', data)
+  // Listen to Domain Events and broadcast strictly within tenant boundaries
+  eventBus.on('approval.requested', (data: {
+    approvalId: string
+    requesterId: string
+    channelId: string | null
+    action: string
+    notes?: string | null
+    enterpriseId?: string
+  }) => {
+    logger.debug({ approvalId: data.approvalId, enterpriseId: data.enterpriseId }, '[ApprovalSocket] Broadcasting request')
 
-    // Notify channel-scoped managers
-    if (data.channelId) {
-      approvalNamespace.to(`channel:${data.channelId}`).emit('new_approval_request', data)
+    if (data.enterpriseId) {
+      // Notify only this enterprise's admins
+      approvalNamespace.to(`enterprise:${data.enterpriseId}:admins`).emit('new_approval_request', data)
+
+      // Notify only this enterprise's channel managers
+      if (data.channelId) {
+        approvalNamespace.to(`enterprise:${data.enterpriseId}:channel:${data.channelId}`).emit('new_approval_request', data)
+      }
+    } else {
+      // Fallback for unscoped local testing
+      if (data.channelId) {
+        approvalNamespace.to(`channel:${data.channelId}`).emit('new_approval_request', data)
+      }
     }
   })
 }

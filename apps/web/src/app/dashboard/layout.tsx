@@ -4,12 +4,29 @@ import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { useAuthStore } from '@/stores/auth.store'
 import { useOfflineStore } from '@/stores/offline.store'
-import { NAV_ITEMS_BY_ROLE, ROLE_LANDING_PAGES } from '@/lib/nav-config'
+import { NAV_ITEMS_BY_ROLE, ROLE_LANDING_PAGES, getNavForUser } from '@/lib/nav-config'
 import { api } from '@/lib/api-client'
 import { io } from 'socket.io-client'
 import { toast } from 'react-hot-toast'
 import ChatInterface from '@/components/ChatInterface'
 import { SystemHealthPill } from './SystemHealthPill'
+import { resolveEnterpriseCapabilities, type PlanFeatureKey } from '@/lib/plans'
+import { NotificationCenter } from '@/components/shared/NotificationCenter'
+import { SubscriptionBanner } from '@/components/shared/SubscriptionBanner'
+
+const FEATURE_ROUTE_MAP: Array<{ prefix: string; feature: PlanFeatureKey; name: string }> = [
+  { prefix: '/dashboard/invoicing', feature: 'invoicing', name: 'Invoicing' },
+  { prefix: '/dashboard/transfers', feature: 'transfers', name: 'Stock Transfers' },
+  { prefix: '/dashboard/serials', feature: 'serials', name: 'Serial Numbers' },
+  { prefix: '/dashboard/credit', feature: 'credit', name: 'Customer Credit' },
+  { prefix: '/dashboard/accounting/assets', feature: 'fixedAssets', name: 'Fixed Assets' },
+  { prefix: '/dashboard/accounting', feature: 'accounting', name: 'Accounting' },
+  { prefix: '/dashboard/items/bulk-opening', feature: 'catalog', name: 'Master Catalog Setup' },
+  { prefix: '/dashboard/payroll', feature: 'payroll', name: 'Payroll' },
+  { prefix: '/dashboard/audit/margin-audit', feature: 'marginAudit', name: 'Forensic Audit' },
+  { prefix: '/dashboard/audit/serials', feature: 'serials', name: 'Serial Forensics' },
+  { prefix: '/dashboard/ai-portal', feature: 'aiPortal', name: 'LuxAI' },
+]
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -18,16 +35,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { isOnline, getPendingCount, syncPendingSales } = useOfflineStore()
   const pendingCount = getPendingCount()
 
-  const isSuperOrPlatformOwner = user?.role === 'PLATFORM_OWNER' || user?.role === 'SUPER_ADMIN'
-  const isSwitchedWorkspace = isPlatformOwnerSwitched || (isSuperOrPlatformOwner && !!user?.enterpriseId && pathname !== '/dashboard/enterprises')
+  const isPlatformOwner = user?.role === 'PLATFORM_OWNER'
+  const isSwitchedWorkspace = Boolean(isPlatformOwnerSwitched && isPlatformOwner && user?.enterpriseId)
+  const isPlatformView = isPlatformOwner && !user?.enterpriseId
 
-  // When a Platform Owner is switched into a tenant, give them the full Manager Admin navigation
-  const effectiveRole = (isPlatformOwnerSwitched && user?.enterpriseId) ? 'MANAGER_ADMIN' : (user?.role || 'CASHIER')
-  const roleNav = NAV_ITEMS_BY_ROLE[effectiveRole] || NAV_ITEMS_BY_ROLE['CASHIER']
+  // When a Platform Owner is switched into a tenant, give them the full Manager Admin navigation for that tenant
+  const effectiveRole = (isPlatformOwnerSwitched && isPlatformOwner && user?.enterpriseId) ? 'MANAGER_ADMIN' : (user?.role || 'CASHIER')
+  const roleNav = getNavForUser(effectiveRole, user?.enterprise)
   const isPosMode = pathname === '/dashboard/pos'
 
   const [mounted, setMounted] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  // Plan capability check
+  const isFeatureBlocked = Boolean(
+    user?.enterprise && FEATURE_ROUTE_MAP.some((rule) => {
+      if (pathname === rule.prefix || pathname.startsWith(rule.prefix + '/')) {
+        const caps = resolveEnterpriseCapabilities(user.enterprise)
+        return !caps.hasFeature(rule.feature)
+      }
+      return false
+    })
+  )
 
   useEffect(() => { setMounted(true) }, [])
 
@@ -37,15 +66,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (!isAuthenticated || !mounted) return
-    if (isSuperOrPlatformOwner) return // Super Admin / Platform Owner has full access across all dashboard pages
+
+    // If viewing a feature that does not exist in this enterprise's plan tier, redirect away immediately
+    if (isFeatureBlocked) {
+      toast.error('This module is not included in your current subscription plan.', { id: 'plan-feature-locked' })
+      router.replace('/dashboard')
+      return
+    }
+
+    // Platform Owner in Master Fleet has global access
+    if (user?.role === 'PLATFORM_OWNER' && !user?.enterpriseId) return
 
     const allowedHrefs = roleNav.flatMap(g => g.items.map(i => i.href))
     const landingPage = user?.role ? ROLE_LANDING_PAGES[user.role] : '/dashboard'
-    const isAllowed = pathname === landingPage || allowedHrefs.some(href => pathname === href || pathname.startsWith(href + '/'))
+    const isAllowed = pathname === landingPage || pathname === '/dashboard' || allowedHrefs.some(href => pathname === href || pathname.startsWith(href + '/'))
     if (!isAllowed && pathname !== '/dashboard/settings') {
       router.replace(landingPage!)
     }
-  }, [isAuthenticated, pathname, user, roleNav, router, isSuperOrPlatformOwner, mounted])
+  }, [isAuthenticated, pathname, user, roleNav, router, isFeatureBlocked, mounted])
 
   useEffect(() => {
     const handleOnline  = () => useOfflineStore.getState().setOnline(true)
@@ -139,35 +177,89 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!isAuthenticated) return null
 
-  const isPlatformView = user?.role === 'PLATFORM_OWNER' && !isPlatformOwnerSwitched
-
   const SidebarContent = () => (
     <>
-      <div className="sidebar-brand" style={isPlatformView ? {
-        background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(217, 119, 6, 0.04))',
-        borderBottom: '2px solid rgba(245, 158, 11, 0.3)',
-      } : undefined}>
-        <h1 style={{ fontSize: '1.25rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {isPlatformView ? (
-            <span style={{
-              background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-              fontWeight: 900,
-              letterSpacing: '-0.02em',
-            }}>braynPOS Fleet HQ</span>
-          ) : (
-            user?.enterprise?.name || 'LUX FLEET'
-          )}
-        </h1>
-        <p style={{ marginTop: 4, opacity: 0.7, fontSize: '0.75rem' }}>
-          {isPlatformView
-            ? '🛡️ Platform Owner • Master Control'
-            : `${user?.channel?.name || 'Master Fleet'} • ${user?.enterprise?.plan || 'Platform Admin'}`
-          }
-        </p>
+      <div className="sidebar-brand" style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '16px 18px',
+        marginBottom: '8px',
+        borderBottom: isPlatformView ? '2px solid rgba(245, 158, 11, 0.35)' : '1px solid var(--border)',
+        background: isPlatformView ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(217, 119, 6, 0.05))' : 'var(--bg-elevated)',
+      }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <h1 style={{
+            fontSize: '1.15rem',
+            fontWeight: 800,
+            color: 'var(--text-primary)',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            margin: 0,
+            lineHeight: 1.3,
+          }}>
+            {isPlatformView ? (
+              <span style={{
+                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+                fontWeight: 900,
+                letterSpacing: '-0.02em',
+              }}>braynPOS Fleet HQ</span>
+            ) : (
+              user?.enterprise?.name || 'LUX FLEET'
+            )}
+          </h1>
+          <div style={{
+            marginTop: 5,
+            fontSize: '0.82rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            flexWrap: 'wrap',
+          }}>
+            <span style={{ color: 'var(--primary)', fontWeight: 700 }}>
+              {isPlatformView ? '🛡️ Master Control' : (user?.channel?.name || 'Main Branch')}
+            </span>
+            <span style={{ color: 'var(--text-muted)' }}>•</span>
+            <span className="badge badge-info" style={{ fontSize: '0.72rem', padding: '2px 7px' }}>
+              {isPlatformView ? 'PLATFORM OWNER' : (user?.enterprise?.plan || 'STARTER')}
+            </span>
+          </div>
+        </div>
       </div>
+
+      {isSwitchedWorkspace && (
+        <div style={{ padding: '0 12px 10px' }}>
+          <button
+            onClick={() => {
+              exitWorkspace()
+              router.push('/dashboard/enterprises')
+            }}
+            className="btn btn-sm"
+            style={{
+              width: '100%',
+              background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+              color: '#ffffff',
+              border: 'none',
+              fontSize: '0.75rem',
+              fontWeight: 800,
+              padding: '8px 10px',
+              borderRadius: 'var(--radius-md)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              boxShadow: '0 2px 8px rgba(245, 158, 11, 0.3)',
+            }}
+          >
+            ← Return to Fleet HQ
+          </button>
+        </div>
+      )}
 
       <div className="sidebar-nav">
         {roleNav.map((group) => (
@@ -177,7 +269,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 key={item.href}
                 href={item.href}
-                className={`nav-link ${pathname === item.href ? 'active' : ''}`}
+                className={`nav-link ${pathname === item.href || pathname.startsWith(item.href + '/') ? 'active' : ''}`}
               >
                 <span>{item.label}</span>
               </Link>
@@ -186,122 +278,98 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         ))}
       </div>
 
-      <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
+      <div style={{ padding: '16px 18px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {pendingCount > 0 && (
           <div style={{
-            background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.3)',
-            borderRadius: 'var(--radius-md)', padding: '8px 12px', marginBottom: 12,
-            fontSize: '0.8rem', color: 'var(--warning)',
+            background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: 'var(--radius-md)', padding: '9px 12px',
+            fontSize: '0.85rem', color: 'var(--warning)', fontWeight: 600,
           }}>
             ⚡ {pendingCount} offline sale{pendingCount > 1 ? 's' : ''} pending sync
           </div>
         )}
-        
-        <div style={{ marginBottom: 12 }}>
-          <SystemHealthPill />
+
+        {/* Notification Center in sidebar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            <strong style={{ color: 'var(--text-primary)', fontSize: '0.95rem' }}>{user?.username}</strong>
+            <br />
+            <span className="badge badge-primary" style={{ marginTop: 5, fontSize: '0.75rem' }}>{user?.role}</span>
+          </div>
+          <NotificationCenter />
         </div>
 
-        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-          <strong style={{ color: 'var(--text-primary)' }}>{user?.username}</strong><br />
-          <span className="badge badge-primary" style={{ marginTop: 4 }}>{user?.role}</span>
-        </div>
+        <SystemHealthPill />
+
         <button
           className="btn btn-ghost btn-sm"
           onClick={() => { logout(); router.push('/login') }}
-          style={{ width: '100%', marginTop: 12, justifyContent: 'center' }}
+          style={{ width: '100%', justifyContent: 'center', fontSize: '0.9rem' }}
           id="logout-btn"
         >
           Sign Out
         </button>
+
+        {!isSwitchedWorkspace && user?.role === 'SUPER_ADMIN' && user?.enterpriseId && (
+          <div style={{
+            padding: '9px 11px',
+            background: 'var(--bg-elevated)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)',
+            fontSize: '0.8rem',
+            color: 'var(--text-secondary)',
+            lineHeight: 1.4,
+          }}>
+            🛡️ <strong>Tenant Admin Mode</strong><br />
+            Sign out and log in as <code>admin</code> to access Master Fleet.
+          </div>
+        )}
       </div>
     </>
   )
 
   return (
-    <div className="layout" style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-      {/* ── Platform Super Admin Workspace Impersonation Banner ── */}
-      {isSwitchedWorkspace && (
-        <div style={{
-          background: 'linear-gradient(90deg, #0f172a 0%, #1e293b 100%)',
-          color: '#ffffff',
-          padding: '10px 20px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          fontSize: '0.85rem',
-          fontWeight: 600,
-          borderBottom: '2px solid var(--primary)',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
-          zIndex: 99,
-          position: 'sticky',
-          top: 0,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: '1.1rem' }}>🛡️</span>
-            <span>
-              Platform Super Admin: Active in <strong>{user?.enterprise?.name}</strong> ({user?.channel?.name || 'Headquarters'})
-            </span>
+    <div className="layout" style={{ display: 'flex', minHeight: '100vh' }}>
+      {!isPosMode && (
+        <>
+          {/* Desktop sidebar — single navigation pane, no top bar */}
+          <nav className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="main-sidebar">
+            <SidebarContent />
+          </nav>
+
+          {/* Mobile overlay backdrop */}
+          {sidebarOpen && (
+            <div
+              className="sidebar-overlay"
+              onClick={() => setSidebarOpen(false)}
+              aria-hidden="true"
+            />
+          )}
+
+          {/* Mobile top bar with hamburger */}
+          <div className="mobile-topbar" id="mobile-topbar">
+            <button
+              className="hamburger-btn"
+              onClick={() => setSidebarOpen(s => !s)}
+              aria-label="Toggle navigation menu"
+              aria-expanded={sidebarOpen}
+            >
+              {sidebarOpen ? '✕' : '☰'}
+            </button>
+            <span className="mobile-brand">LUX</span>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {!isOnline && <span className="badge badge-warning" style={{ fontSize: '0.75rem' }}>Offline</span>}
+              {pendingCount > 0 && <span className="badge badge-warning" style={{ fontSize: '0.75rem' }}>⚡{pendingCount}</span>}
+              <NotificationCenter />
+            </div>
           </div>
-          <button
-            onClick={() => {
-              exitWorkspace()
-              router.push('/dashboard/enterprises')
-            }}
-            className="btn btn-sm"
-            style={{
-              background: 'var(--primary)',
-              color: '#ffffff',
-              border: 'none',
-              padding: '6px 14px',
-              fontSize: '0.8rem',
-              fontWeight: 700,
-              borderRadius: 'var(--radius-md)',
-              cursor: 'pointer',
-            }}
-          >
-            ← Exit to Master Fleet
-          </button>
-        </div>
+        </>
       )}
 
-      <div style={{ display: 'flex', flex: 1 }}>
-        {!isPosMode && (
-          <>
-            {/* Desktop sidebar */}
-            <nav className={`sidebar ${sidebarOpen ? 'open' : ''}`} id="main-sidebar">
-              <SidebarContent />
-            </nav>
-
-            {/* Mobile overlay backdrop */}
-            {sidebarOpen && (
-              <div
-                className="sidebar-overlay"
-                onClick={() => setSidebarOpen(false)}
-                aria-hidden="true"
-              />
-            )}
-
-            {/* Mobile top bar with hamburger */}
-            <div className="mobile-topbar" id="mobile-topbar">
-              <button
-                className="hamburger-btn"
-                onClick={() => setSidebarOpen(s => !s)}
-                aria-label="Toggle navigation menu"
-                aria-expanded={sidebarOpen}
-              >
-                {sidebarOpen ? '✕' : '☰'}
-              </button>
-              <span className="mobile-brand">LUX</span>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                {!isOnline && <span className="badge badge-warning" style={{ fontSize: '0.65rem' }}>Offline</span>}
-                {pendingCount > 0 && <span className="badge badge-warning" style={{ fontSize: '0.65rem' }}>⚡{pendingCount}</span>}
-              </div>
-            </div>
-          </>
-        )}
-
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <SubscriptionBanner />
         <main className={`main-content ${isPosMode ? 'full-width' : ''}`} id="main-content" style={{ flex: 1 }}>
-          {children}
+          {isFeatureBlocked ? null : children}
         </main>
       </div>
 

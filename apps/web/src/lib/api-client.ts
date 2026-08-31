@@ -188,6 +188,13 @@ export const api = {
       token,
     }),
 
+  put: <T>(path: string, body: unknown, token?: string) =>
+    apiFetch<T>(path, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      token,
+    }),
+
   delete: <T>(path: string, token?: string, body?: any) =>
     apiFetch<T>(path, { 
       method: 'DELETE', 

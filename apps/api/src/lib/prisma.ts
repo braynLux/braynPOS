@@ -14,6 +14,12 @@ function buildDatasourceUrl() {
   try {
     const url = new URL(process.env.DATABASE_URL)
     url.searchParams.set('connect_timeout', '10')
+    if (!url.searchParams.has('connection_limit')) {
+      url.searchParams.set('connection_limit', process.env.DATABASE_POOL_SIZE || '30')
+    }
+    if (!url.searchParams.has('pool_timeout')) {
+      url.searchParams.set('pool_timeout', '15')
+    }
     return url.toString()
   } catch {
     // Malformed URL — return as-is so Prisma surfaces the real error

@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { verifyPassword } from '../../lib/password.js'
 import { validateApprovalToken } from '../auth/manager-approve.routes.js'
+import { assertUserQuota } from '../../middleware/plan-guard.js'
 
 const updateUserSchema = z.object({
   username: z.string().min(3).optional(),
@@ -55,12 +56,12 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /users
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const query = listUsersQuery.parse(request.query)
     
     // Strict Channel Isolation for regular Managers
-    if (!['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
+    if (!['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(request.user.role)) {
       if (!request.user.channelId) {
         throw { statusCode: 400, message: 'Your account has no channel assigned' }
       }
@@ -72,7 +73,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /users/:id
   app.get('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     return usersService.findById(id, request.user)
@@ -80,8 +81,11 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /users
   app.post('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
+    // Enforce SaaS Subscription Plan User Quota
+    await assertUserQuota(request.user.enterpriseId)
+
     // Inline schema to ensure validation picks up latest changes during debugging
     const createSchema = z.object({
       username: z.string().min(3).max(50),
@@ -93,8 +97,8 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
     const body = createSchema.parse(request.body)
     const { approvalToken } = z.object({ approvalToken: z.string().optional() }).parse(request.body)
 
-    // Security check: Only SUPER_ADMIN can create higher roles
-    if (request.user.role !== 'SUPER_ADMIN') {
+    // Security check: Only SUPER_ADMIN and PLATFORM_OWNER can create higher roles
+    if (request.user.role !== 'SUPER_ADMIN' && request.user.role !== 'PLATFORM_OWNER') {
       if (['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(body.role)) {
         return reply.status(403).send({ error: 'You do not have permission to create administrative roles' })
       }
@@ -145,7 +149,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /users/:id
   app.patch('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const body = updateUserSchema.parse(request.body)
@@ -157,8 +161,8 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
     const { hasRole } = await import('../../middleware/authorize.js')
     
-    // Non-SUPER_ADMINs cannot modify users with higher or equal ranking
-    if (request.user.role !== 'SUPER_ADMIN') {
+    // Non-SUPER_ADMINs/PLATFORM_OWNERs cannot modify users with higher or equal ranking
+    if (request.user.role !== 'SUPER_ADMIN' && request.user.role !== 'PLATFORM_OWNER') {
       if (!hasRole(request.user, targetUser.role as any)) {
         return reply.status(403).send({ error: 'You cannot modify a user with a higher administrative rank' })
       }
@@ -222,7 +226,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // PATCH /users/:id/salary
   app.patch('/:id/salary', {
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const { grossSalary } = z.object({ grossSalary: z.number().min(0) }).parse(request.body)
@@ -233,7 +237,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // DELETE /users/:id (soft delete)
   app.delete('/:id', {
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const { password, approvalToken } = z.object({ 
@@ -288,7 +292,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /users/:id/reset-password
   app.post('/:id/reset-password', {
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const { password } = z.object({ password: z.string().min(6) }).parse(request.body)
@@ -311,7 +315,7 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
   })
   // POST /users/:id/reset-mfa
   app.post('/:id/reset-mfa', {
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const { password } = z.object({ password: z.string() }).parse(request.body)

@@ -2,19 +2,21 @@ import type { FastifyPluginAsync } from 'fastify'
 import { getCreditStatus, recordRepayment, adjustCreditLimit, getArAgingReport, getApBalanceSummary } from './credit.service.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { authorize }    from '../../middleware/authorize.js'
+import { requirePlanFeature } from '../../middleware/plan-guard.js'
 import { RATE }         from '../../lib/rate-limit.plugin.js'
 import { prisma }       from '../../lib/prisma.js'
 import { z }            from 'zod'
 
-const HQ_CREDIT_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_CREDIT_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const creditRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
+  app.addHook('preHandler', requirePlanFeature('credit'))
 
   // GET /credit/status/:customerId
   app.get('/status/:customerId', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
   }, async (request, reply) => {
     const { customerId } = request.params as { customerId: string }
 
@@ -47,7 +49,7 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
   // GET /credit/outstanding/:customerId
   app.get('/outstanding/:customerId', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
   }, async (request, reply) => {
     const { customerId } = request.params as { customerId: string }
 
@@ -95,7 +97,7 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
   // GET /credit/aging — accounts-receivable aging across all customers
   app.get('/aging', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const isHQ = HQ_CREDIT_ROLES.includes(request.user.role)
     if (!isHQ && !request.user.channelId) {
@@ -107,7 +109,7 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
   // GET /credit/supplier-balances — approximate AP summary (see service docstring)
   app.get('/supplier-balances', {
     config:     RATE.READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const isHQ = HQ_CREDIT_ROLES.includes(request.user.role)
     if (!isHQ && !request.user.channelId) {
@@ -119,7 +121,7 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
   // POST /credit/repay
   app.post('/repay', {
     config:     RATE.SALE_COMMIT,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'CASHIER', 'SALES_PERSON')],
   }, async (request, reply) => {
     const body = z.object({
       customerId: z.string().uuid(),
@@ -153,7 +155,7 @@ export const creditRoutes: FastifyPluginAsync = async (app) => {
   // PATCH /api/v1/credit/adjust-limit
   app.patch('/adjust-limit', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const body = z.object({
       customerId: z.string().uuid(),

@@ -31,7 +31,7 @@ export class UsersService {
     }
 
     const where: Prisma.UserWhereInput = {
-      ...(enterpriseId && !isPlatformOwner && { enterpriseId }),
+      ...(enterpriseId && { enterpriseId }),
       ...(query.role && { role: query.role }),
       ...(query.channelId && { channelId: query.channelId }),
       ...(query.search && {
@@ -85,7 +85,7 @@ export class UsersService {
     const enterpriseId    = actor.enterpriseId
 
     // Enterprise boundary check
-    if (enterpriseId && !isPlatformOwner && user.enterpriseId && user.enterpriseId !== enterpriseId) {
+    if (enterpriseId && user.enterpriseId && user.enterpriseId !== enterpriseId) {
       throw { statusCode: 403, message: 'Forbidden: Cannot access users from other enterprises' }
     }
 

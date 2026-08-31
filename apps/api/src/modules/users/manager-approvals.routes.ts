@@ -11,7 +11,7 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
 
   // GET /api/v1/users/approvals
   app.get('/', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request) => {
     const where: any = { status: 'PENDING' }
     
@@ -45,7 +45,7 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /api/v1/users/approvals/:id/approve
   app.post('/:id/approve', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const approval = await prisma.managerApproval.findUnique({
@@ -110,7 +110,7 @@ export const managerApprovalsRoutes: FastifyPluginAsync = async (app) => {
 
   // POST /api/v1/users/approvals/:id/reject
   app.post('/:id/reject', {
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const { id } = request.params as { id: string }
     const { notes } = z.object({ notes: z.string().optional() }).parse(request.body)

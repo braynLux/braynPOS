@@ -5,7 +5,7 @@ import { authorize }    from '../../middleware/authorize.js'
 import { RATE }         from '../../lib/rate-limit.plugin.js'
 import { z }            from 'zod'
 
-const HQ_STOCK_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_STOCK_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const stockOverviewRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -15,7 +15,7 @@ export const stockOverviewRoutes: FastifyPluginAsync = async (app) => {
   // shared across all endpoints, making stock scraping trivially easy.
   app.get('/balances', {
     config:     RATE.STOCK_READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER')],
   }, async (request) => {
     const { channelId, categoryId } = z.object({
       channelId:  z.string().uuid().optional(),
@@ -30,13 +30,13 @@ export const stockOverviewRoutes: FastifyPluginAsync = async (app) => {
     if (!effectiveChannelId && !HQ_STOCK_ROLES.includes(request.user.role)) {
       throw { statusCode: 400, message: 'channelId required' }
     }
-    return stockService.getChannelBalances(effectiveChannelId, categoryId)
+    return stockService.getChannelBalances(effectiveChannelId, categoryId, request.user.enterpriseId ?? undefined)
   })
 
   // GET /stock/balance — single item balance
   app.get('/balance', {
     config:     RATE.STOCK_READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER', 'CASHIER')],
   }, async (request) => {
     const { itemId, channelId } = z.object({
       itemId:    z.string().uuid(),
@@ -58,16 +58,16 @@ export const stockOverviewRoutes: FastifyPluginAsync = async (app) => {
   // GET /stock/item/:itemId/all-channels — item stock across all channels
   app.get('/item/:itemId/all-channels', {
     config:     RATE.STOCK_READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN')],
   }, async (request) => {
-    const { itemId } = request.params as { itemId: string }
-    return stockService.getItemBalancesAllChannels(itemId)
+    const { itemId } = z.object({ itemId: z.string().uuid() }).parse(request.params)
+    return stockService.getItemBalancesAllChannels(itemId, request.user.enterpriseId ?? undefined)
   })
 
   // GET /stock/low-stock — items below reorder level
   app.get('/low-stock', {
     config:     RATE.STOCK_READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request) => {
     const { channelId, categoryId } = z.object({
       channelId:  z.string().uuid().optional(),
@@ -82,13 +82,13 @@ export const stockOverviewRoutes: FastifyPluginAsync = async (app) => {
     if (!effectiveChannelId && !HQ_STOCK_ROLES.includes(request.user.role)) {
       throw { statusCode: 400, message: 'channelId required' }
     }
-    return stockService.getLowStockItems(effectiveChannelId, categoryId)
+    return stockService.getLowStockItems(effectiveChannelId, categoryId, request.user.enterpriseId ?? undefined)
   })
 
   // GET /stock/movements — movement history
   app.get('/movements', {
     config:     RATE.STOCK_READ,
-    preHandler: [authorize('SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'STOREKEEPER')],
   }, async (request) => {
     const query = z.object({
       itemId:    z.string().uuid(),

@@ -226,10 +226,8 @@ export default function EditItemPage() {
         brandId: formData.brandId,
         supplierId: formData.supplierId,
         unitOfMeasure: formData.unitOfMeasure,
-        weightedAvgCost: Number(formData.weightedAvgCost) || 0,
-        wholesalePrice: Number(formData.wholesalePrice) || 0,
-        minRetailPrice: Number(formData.minRetailPrice) || 0,
-        minWholesalePrice: Number(formData.minWholesalePrice) || 0,
+        minRetailPrice: Number(formData.retailPrice) || 0,
+        minWholesalePrice: Number(formData.wholesalePrice) || Number(formData.retailPrice) || 0,
         reorderLevel: Number(formData.reorderLevel) || 0,
         imageUrl: formData.imageUrl,
         type: formData.type,
@@ -475,22 +473,12 @@ export default function EditItemPage() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 16 }}>
-          <div className="form-group" style={{ flex: 1 }}>
-            <label>Floor Price - Retail (KES)</label>
-            <input type="number" className="input" min="0" step="0.01" value={formData.minRetailPrice} onChange={e => set('minRetailPrice', e.target.value)} />
+        {formData.type === 'PRODUCT' && (
+          <div className="form-group">
+            <label>Reorder Level (Qty)</label>
+            <input type="number" className="input" min="0" value={formData.reorderLevel} onChange={e => set('reorderLevel', e.target.value)} />
           </div>
-          <div className="form-group" style={{ flex: 1 }}>
-            <label>Floor Price - Wholesale (KES)</label>
-            <input type="number" className="input" min="0" step="0.01" value={formData.minWholesalePrice} onChange={e => set('minWholesalePrice', e.target.value)} />
-          </div>
-          {formData.type === 'PRODUCT' && (
-            <div className="form-group" style={{ flex: 1 }}>
-              <label>Reorder Level (Qty)</label>
-              <input type="number" className="input" min="0" value={formData.reorderLevel} onChange={e => set('reorderLevel', e.target.value)} />
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Status */}
         <div className="form-group">

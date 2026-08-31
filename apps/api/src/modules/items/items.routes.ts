@@ -7,6 +7,7 @@ import {
 } from './items.schema.js'
 import { authenticate }           from '../../middleware/authenticate.js'
 import { authorize }              from '../../middleware/authorize.js'
+import { requirePlanFeature }     from '../../middleware/plan-guard.js'
 import { prisma }                 from '../../lib/prisma.js'
 import { validateApprovalToken }  from '../auth/manager-approve.routes.js'
 import { RATE }                   from '../../lib/rate-limit.plugin.js'
@@ -16,7 +17,7 @@ import { logAction, AUDIT }       from '../../lib/audit.js'
 import '@fastify/multipart'
 import { MultipartFile } from '@fastify/multipart'
 
-const HQ_ITEM_ROLES = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
+const HQ_ITEM_ROLES = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN']
 
 export const itemsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticate)
@@ -112,11 +113,20 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
       supplierId: body.supplierId === '' ? null : body.supplierId,
     }
 
+    let creatorChannelId = request.user.channelId || undefined
+    if (!creatorChannelId && request.user.enterpriseId) {
+      const defaultChannel = await prisma.channel.findFirst({
+        where: { enterpriseId: request.user.enterpriseId, deletedAt: null },
+        select: { id: true }
+      })
+      creatorChannelId = defaultChannel?.id
+    }
+
     const item = await itemsService.create({
       ...sanitizedBody,
-      creatorChannelId: request.user.channelId || undefined,
-      // FIX 2: use .sub not .id
+      creatorChannelId,
       creatorId:        request.user.sub,
+      enterpriseId:     request.user.enterpriseId ?? null,
     })
     reply.status(201).send(item)
   })
@@ -366,7 +376,7 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/brands', { config: RATE.READ }, async (request) => {
     const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
     if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
-    return itemsService.findAllBrands(isHQ ? undefined : request.user.channelId!)
+    return itemsService.findAllBrands(isHQ ? undefined : request.user.channelId!, request.user.enterpriseId ?? undefined)
   })
 
   app.post('/brands', {
@@ -377,7 +387,15 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
       throw { statusCode: 400, message: 'Your account has no channel assigned' }
     }
-    const brand = await itemsService.createBrand(name, request.user.channelId || undefined)
+    let channelId = request.user.channelId || undefined
+    if (!channelId && request.user.enterpriseId) {
+      const defaultChannel = await prisma.channel.findFirst({
+        where: { enterpriseId: request.user.enterpriseId, deletedAt: null },
+        select: { id: true }
+      })
+      channelId = defaultChannel?.id
+    }
+    const brand = await itemsService.createBrand(name, channelId)
     reply.status(201).send(brand)
   })
 
@@ -406,7 +424,7 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/categories', { config: RATE.READ }, async (request) => {
     const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
     if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
-    return itemsService.findAllCategories(isHQ ? undefined : request.user.channelId!)
+    return itemsService.findAllCategories(isHQ ? undefined : request.user.channelId!, request.user.enterpriseId ?? undefined)
   })
 
   app.post('/categories', {
@@ -420,8 +438,16 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
       throw { statusCode: 400, message: 'Your account has no channel assigned' }
     }
+    let channelId = request.user.channelId || undefined
+    if (!channelId && request.user.enterpriseId) {
+      const defaultChannel = await prisma.channel.findFirst({
+        where: { enterpriseId: request.user.enterpriseId, deletedAt: null },
+        select: { id: true }
+      })
+      channelId = defaultChannel?.id
+    }
     try {
-      const category = await itemsService.createCategory(name, request.user.channelId || undefined, parentId)
+      const category = await itemsService.createCategory(name, channelId, parentId)
       reply.status(201).send(category)
     } catch (err: unknown) {
       if ((err as any)?.code === 'P2002') {
@@ -466,17 +492,17 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
   app.get('/suppliers', { config: RATE.READ }, async (request) => {
     const isHQ = HQ_ITEM_ROLES.includes(request.user.role)
     if (!isHQ && !request.user.channelId) throw { statusCode: 400, message: 'Your account has no channel assigned' }
-    return itemsService.findAllSuppliers(isHQ ? undefined : request.user.channelId!)
+    return itemsService.findAllSuppliers(isHQ ? undefined : request.user.channelId!, request.user.enterpriseId ?? undefined)
   })
 
   app.post('/suppliers', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request, reply) => {
     const body = z.object({
-      name:         z.string().min(1),
+      name:         z.string().min(1, 'Supplier name is required'),
       contactName:  z.string().optional(),
-      phone:        z.string().min(10).max(13).regex(/^[+0-9]+$/, 'Invalid phone number format'),
+      phone:        z.string().min(8).max(20).regex(/^[+0-9\s-]+$/, 'Invalid phone number format').optional().or(z.literal('')),
       email:        z.string().email().optional().or(z.literal('')),
       address:      z.string().optional(),
       taxPin:       z.string().optional(),
@@ -485,13 +511,21 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
     if (!HQ_ITEM_ROLES.includes(request.user.role) && !request.user.channelId) {
       throw { statusCode: 400, message: 'Your account has no channel assigned' }
     }
-    const supplier = await itemsService.createSupplier({ ...body, channelId: request.user.channelId || undefined })
+    let channelId = request.user.channelId || undefined
+    if (!channelId && request.user.enterpriseId) {
+      const defaultChannel = await prisma.channel.findFirst({
+        where: { enterpriseId: request.user.enterpriseId, deletedAt: null },
+        select: { id: true }
+      })
+      channelId = defaultChannel?.id
+    }
+    const supplier = await itemsService.createSupplier({ ...body, channelId })
     reply.status(201).send(supplier)
   })
 
   app.patch('/suppliers/:id', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const isHQ   = HQ_ITEM_ROLES.includes(request.user.role)
@@ -510,7 +544,7 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete('/suppliers/:id', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
+    preHandler: [authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER')],
   }, async (request) => {
     const { id } = request.params as { id: string }
     const isHQ   = HQ_ITEM_ROLES.includes(request.user.role)
@@ -525,7 +559,10 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
   // POST /items/import
   app.post('/import', {
     config:     RATE.APPROVAL,
-    preHandler: [authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN')],
+    preHandler: [
+      authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'),
+      requirePlanFeature('catalog'),
+    ],
   }, async (request) => {
     const data = await request.file()
     if (!data || !data.file) throw { statusCode: 400, message: 'CSV file required' }
