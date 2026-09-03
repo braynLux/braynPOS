@@ -6,6 +6,8 @@ import {
   mfaVerifySchema,
   refreshTokenSchema,
   changePasswordSchema,
+  forgotPasswordSchema,
+  resetPasswordWithCodeSchema,
 } from './auth.schema.js'
 import { authenticate }  from '../../middleware/authenticate.js'
 import { RATE }          from '../../lib/rate-limit.plugin.js'
@@ -73,6 +75,24 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const payload = verifyToken(tempToken)
     
     const result = await mfaService.verifyRecoveryCode(payload.sub, recoveryCode)
+    reply.send(result)
+  })
+
+  // POST /auth/forgot-password
+  app.post('/forgot-password', {
+    config: RATE.AUTH_LOGIN,
+  }, async (request, reply) => {
+    const { identifier } = forgotPasswordSchema.parse(request.body)
+    const result = await authService.requestPasswordReset(identifier)
+    reply.send(result)
+  })
+
+  // POST /auth/reset-password
+  app.post('/reset-password', {
+    config: RATE.AUTH_LOGIN,
+  }, async (request, reply) => {
+    const { identifier, code, newPassword } = resetPasswordWithCodeSchema.parse(request.body)
+    const result = await authService.resetPasswordWithCode(identifier, code, newPassword)
     reply.send(result)
   })
 

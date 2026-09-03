@@ -119,12 +119,13 @@ export default function LoginPage() {
               </button>
             </div>
           </div>
+
           <button
             id="login-submit"
             className="btn btn-primary btn-lg"
             type="submit"
             disabled={loading}
-            style={{ width: '100%', justifyContent: 'center' }}
+            style={{ width: '100%', justifyContent: 'center', marginTop: '1rem' }}
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>

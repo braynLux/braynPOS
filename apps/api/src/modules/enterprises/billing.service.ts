@@ -137,24 +137,72 @@ export class BillingService {
   /**
    * Extend free trial for an enterprise by X days.
    */
-  static async extendTrial(enterpriseId: string, days: number, recordedBy: string) {
+  static async adjustTrial(
+    enterpriseId: string,
+    payload: { days?: number; newEndDate?: string; mode?: 'SET_DAYS' | 'ADD_DAYS' | 'SET_DATE' | 'EXPIRE_NOW' },
+    recordedBy: string
+  ) {
     const enterprise = await prisma.enterprise.findUnique({ where: { id: enterpriseId } })
     if (!enterprise || enterprise.deletedAt) {
       throw { statusCode: 404, message: 'Enterprise not found' }
     }
 
-    const baseDate = enterprise.trialEndsAt && new Date(enterprise.trialEndsAt) > new Date()
-      ? new Date(enterprise.trialEndsAt)
-      : new Date()
+    const mode = payload.mode || 'ADD_DAYS'
+    const now = new Date()
+    let newTrialEnd: Date
+    let newBillingStatus = 'TRIAL'
+    let isEnterpriseActive = true
+    let notificationTitle = 'Free Trial Adjusted'
+    let notificationMessage = ''
 
-    const newTrialEnd = dayjs(baseDate).add(days, 'day').toDate()
+    if (mode === 'EXPIRE_NOW') {
+      newTrialEnd = now
+      newBillingStatus = 'EXPIRED'
+      notificationTitle = 'Free Trial Concluded'
+      notificationMessage = `Your free trial for ${enterprise.name} has concluded. Please contact the platform admin to activate your official software subscription.`
+    } else if (mode === 'SET_DATE') {
+      if (!payload.newEndDate) {
+        throw { statusCode: 400, message: 'newEndDate is required for SET_DATE mode' }
+      }
+      newTrialEnd = new Date(payload.newEndDate)
+      if (isNaN(newTrialEnd.getTime())) {
+        throw { statusCode: 400, message: 'Invalid newEndDate format' }
+      }
+      if (newTrialEnd <= now) {
+        newBillingStatus = 'EXPIRED'
+        notificationTitle = 'Free Trial Concluded'
+        notificationMessage = `Your free trial has ended as of ${dayjs(newTrialEnd).format('DD MMM YYYY')}.`
+      } else {
+        notificationMessage = `Your free trial has been set to conclude on ${dayjs(newTrialEnd).format('DD MMM YYYY')}.`
+      }
+    } else if (mode === 'SET_DAYS') {
+      const days = payload.days !== undefined ? payload.days : 14
+      if (days <= 0) {
+        newTrialEnd = now
+        newBillingStatus = 'EXPIRED'
+        notificationTitle = 'Free Trial Concluded'
+        notificationMessage = `Your free trial has concluded.`
+      } else {
+        newTrialEnd = dayjs(now).add(days, 'day').toDate()
+        notificationMessage = `Your free trial duration has been set to ${days} days (valid until ${dayjs(newTrialEnd).format('DD MMM YYYY')}).`
+      }
+    } else {
+      // ADD_DAYS (default)
+      const days = payload.days !== undefined ? payload.days : 14
+      const baseDate = enterprise.trialEndsAt && new Date(enterprise.trialEndsAt) > now
+        ? new Date(enterprise.trialEndsAt)
+        : now
+      newTrialEnd = dayjs(baseDate).add(days, 'day').toDate()
+      notificationTitle = 'Free Trial Extended'
+      notificationMessage = `Your free trial has been extended by ${days} days until ${dayjs(newTrialEnd).format('DD MMM YYYY')}.`
+    }
 
     const updated = await prisma.enterprise.update({
       where: { id: enterpriseId },
       data: {
-        billingStatus: 'TRIAL',
+        billingStatus: newBillingStatus,
         trialEndsAt:   newTrialEnd,
-        isActive:      true,
+        isActive:      isEnterpriseActive,
       },
     })
 
@@ -162,17 +210,24 @@ export class BillingService {
       data: {
         enterpriseId,
         type:     'SYSTEM',
-        title:    'Free Trial Extended',
-        message:  `Your free trial has been extended by ${days} days until ${dayjs(newTrialEnd).format('DD MMM YYYY')}.`,
-        severity: 'INFO',
-        metadata: { newTrialEnd, extendedBy: recordedBy },
+        title:    notificationTitle,
+        message:  notificationMessage,
+        severity: newBillingStatus === 'EXPIRED' ? 'WARNING' : 'INFO',
+        metadata: { newTrialEnd, mode, adjustedBy: recordedBy },
       },
-    })
+    }).catch(() => {})
 
     return {
-      message: `Free trial extended by ${days} days until ${dayjs(newTrialEnd).format('DD MMM YYYY')}.`,
-      enterprise: updated,
+      message:       notificationMessage,
+      enterprise:    updated,
+      newTrialEnd,
+      billingStatus: newBillingStatus,
+      daysRemaining: Math.max(0, dayjs(newTrialEnd).diff(dayjs(now), 'day')),
     }
+  }
+
+  static async extendTrial(enterpriseId: string, days: number, recordedBy: string) {
+    return this.adjustTrial(enterpriseId, { days, mode: 'ADD_DAYS' }, recordedBy)
   }
 
   /**

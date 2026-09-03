@@ -27,7 +27,19 @@ export const changePasswordSchema = z.object({
   newPassword: z.string().min(8).max(100),
 })
 
+export const forgotPasswordSchema = z.object({
+  identifier: z.string().trim().min(1, 'Username or email is required'),
+})
+
+export const resetPasswordWithCodeSchema = z.object({
+  identifier: z.string().trim().min(1, 'Username or email is required'),
+  code: z.string().trim().min(6, 'Verification code must be at least 6 characters'),
+  newPassword: z.string().min(6, 'Password must be at least 6 characters').max(100),
+})
+
 export type LoginInput = z.infer<typeof loginSchema>
 export type RegisterInput = z.infer<typeof registerSchema>
 export type MfaVerifyInput = z.infer<typeof mfaVerifySchema>
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>
+export type ResetPasswordWithCodeInput = z.infer<typeof resetPasswordWithCodeSchema>

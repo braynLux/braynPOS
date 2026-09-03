@@ -162,7 +162,9 @@ export default function PlatformEnterprisesPage() {
   const [submittingPayment, setSubmittingPayment] = useState(false)
 
   const [extendTrialModalEnt, setExtendTrialModalEnt] = useState<EnterpriseItem | null>(null)
-  const [trialDaysToAdd, setTrialDaysToAdd] = useState(14)
+  const [trialAdjustmentMode, setTrialAdjustmentMode] = useState<'SET_DAYS' | 'ADD_DAYS' | 'SET_DATE' | 'EXPIRE_NOW'>('SET_DAYS')
+  const [trialDaysInput, setTrialDaysInput] = useState<number>(14)
+  const [trialDateInput, setTrialDateInput] = useState<string>('')
   const [submittingTrial, setSubmittingTrial] = useState(false)
 
   const [historyModalEnt, setHistoryModalEnt] = useState<{ ent: EnterpriseItem; payments: any[] } | null>(null)
@@ -177,6 +179,7 @@ export default function PlatformEnterprisesPage() {
     businessName: '',
     plan: 'STARTER',
     expiryDays: 7,
+    trialDays: 14,
   })
   const [generatedInvite, setGeneratedInvite] = useState<{ code: string; url: string } | null>(null)
   const [generating, setGenerating] = useState(false)
@@ -292,19 +295,39 @@ export default function PlatformEnterprisesPage() {
     }
   }
 
+  const openAdjustTrialModal = (ent: EnterpriseItem) => {
+    setExtendTrialModalEnt(ent)
+    setTrialAdjustmentMode('SET_DAYS')
+    const remaining = ent.daysRemaining ?? (ent.trialEndsAt ? Math.max(0, dayjs(ent.trialEndsAt).diff(dayjs(), 'day')) : 14)
+    setTrialDaysInput(remaining > 0 ? remaining : 14)
+    setTrialDateInput(ent.trialEndsAt ? dayjs(ent.trialEndsAt).format('YYYY-MM-DD') : dayjs().add(14, 'day').format('YYYY-MM-DD'))
+  }
+
   const handleExtendTrialSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!token || !extendTrialModalEnt) return
     setSubmittingTrial(true)
     try {
-      const res = await api.post<{ message: string }>(`/enterprises/${extendTrialModalEnt.id}/extend-trial`, {
-        days: trialDaysToAdd,
-      }, token)
+      let payload: any = { mode: trialAdjustmentMode }
+      if (trialAdjustmentMode === 'SET_DAYS' || trialAdjustmentMode === 'ADD_DAYS') {
+        payload.days = Number(trialDaysInput)
+      } else if (trialAdjustmentMode === 'SET_DATE') {
+        if (!trialDateInput) {
+          toast.error('Please select an expiry date')
+          setSubmittingTrial(false)
+          return
+        }
+        payload.newEndDate = new Date(trialDateInput).toISOString()
+      } else if (trialAdjustmentMode === 'EXPIRE_NOW') {
+        payload.mode = 'EXPIRE_NOW'
+      }
+
+      const res = await api.post<{ message: string }>(`/enterprises/${extendTrialModalEnt.id}/adjust-trial`, payload, token)
       toast.success(res.message, { icon: '⏳' })
       setExtendTrialModalEnt(null)
       fetchData()
     } catch (err: any) {
-      toast.error(err.message || 'Failed to extend trial')
+      toast.error(err.message || 'Failed to adjust trial')
     } finally {
       setSubmittingTrial(false)
     }
@@ -356,6 +379,7 @@ export default function PlatformEnterprisesPage() {
         businessName: inviteForm.businessName.trim() || undefined,
         plan: inviteForm.plan,
         expiryDays: Number(inviteForm.expiryDays),
+        trialDays: Number(inviteForm.trialDays || 14),
       }, token)
 
       const url = `${window.location.origin}/onboard?code=${res.code}`
@@ -821,13 +845,11 @@ export default function PlatformEnterprisesPage() {
                           </button>
                           <button
                             className="btn btn-sm btn-ghost"
-                            onClick={() => {
-                              setExtendTrialModalEnt(e)
-                            }}
-                            title="Extend Free Trial"
+                            onClick={() => openAdjustTrialModal(e)}
+                            title="Adjust Trial Duration & Expiry"
                             style={{ fontSize: '0.75rem', padding: '4px 8px' }}
                           >
-                            ⏳ Extend Trial
+                            ⏳ Adjust Trial
                           </button>
                           <button
                             className="btn btn-sm btn-ghost"
@@ -1306,41 +1328,230 @@ export default function PlatformEnterprisesPage() {
             background: 'var(--surface-primary, #ffffff)',
             borderRadius: 'var(--radius-lg)',
             width: '100%',
-            maxWidth: 420,
+            maxWidth: 480,
             padding: 24,
             border: '1px solid var(--border)',
             boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
           }}>
-            <h3 style={{ margin: '0 0 4px', fontSize: '1.2rem', fontWeight: 800 }}>
-              Extend Free Trial
-            </h3>
-            <p style={{ margin: '0 0 16px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-              Client: <strong>{extendTrialModalEnt.name}</strong>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>
+                ⏳ Adjust Free Trial Duration
+              </h3>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setExtendTrialModalEnt(null)}
+                style={{ padding: '2px 8px', fontSize: '1.1rem' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ margin: '0 0 12px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+              Client: <strong>{extendTrialModalEnt.name}</strong> ({extendTrialModalEnt.plan} Tier)
             </p>
 
-            <form onSubmit={handleExtendTrialSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: 4 }}>
-                  Days to Add to Trial:
-                </label>
-                <select
-                  className="select"
-                  value={trialDaysToAdd}
-                  onChange={(e) => setTrialDaysToAdd(parseInt(e.target.value) || 14)}
-                >
-                  <option value={7}>+ 7 Days</option>
-                  <option value={14}>+ 14 Days (Standard)</option>
-                  <option value={30}>+ 30 Days (One Month)</option>
-                  <option value={60}>+ 60 Days</option>
-                </select>
+            {/* Current Trial Info Banner */}
+            <div style={{
+              background: 'var(--surface-secondary, #f8fafc)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-md)',
+              padding: '10px 14px',
+              fontSize: '0.85rem',
+              marginBottom: 16,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Current Status:</span>
+                <strong>{extendTrialModalEnt.billingStatus || 'TRIAL'}</strong>
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--text-muted)' }}>Current Expiry Date:</span>
+                <strong>
+                  {extendTrialModalEnt.trialEndsAt
+                    ? dayjs(extendTrialModalEnt.trialEndsAt).format('DD MMM YYYY')
+                    : 'Permanent / Unset'}
+                </strong>
+              </div>
+            </div>
 
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+            {/* Adjustment Mode Selector */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: 6 }}>
+                Adjustment Mode:
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${trialAdjustmentMode === 'SET_DAYS' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setTrialAdjustmentMode('SET_DAYS')}
+                  style={{ fontSize: '0.8rem', justifyContent: 'center' }}
+                >
+                  📅 Set Total Days
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${trialAdjustmentMode === 'ADD_DAYS' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setTrialAdjustmentMode('ADD_DAYS')}
+                  style={{ fontSize: '0.8rem', justifyContent: 'center' }}
+                >
+                  ➕ Add (+X) Days
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${trialAdjustmentMode === 'SET_DATE' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setTrialAdjustmentMode('SET_DATE')}
+                  style={{ fontSize: '0.8rem', justifyContent: 'center' }}
+                >
+                  📆 Pick Expiry Date
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${trialAdjustmentMode === 'EXPIRE_NOW' ? 'btn-danger' : 'btn-ghost'}`}
+                  onClick={() => setTrialAdjustmentMode('EXPIRE_NOW')}
+                  style={{ fontSize: '0.8rem', justifyContent: 'center' }}
+                >
+                  🛑 Expire Now
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleExtendTrialSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {/* Mode 1: SET_DAYS */}
+              {trialAdjustmentMode === 'SET_DAYS' && (
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    New Trial Duration (Days from Today):
+                  </label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                    <input
+                      type="number"
+                      className="input"
+                      min={1}
+                      max={365}
+                      style={{ width: 110 }}
+                      value={trialDaysInput}
+                      onChange={(e) => setTrialDaysInput(Math.max(1, parseInt(e.target.value) || 1))}
+                    />
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {[3, 7, 14, 30, 60, 90].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          className={`btn btn-xs ${trialDaysInput === d ? 'btn-primary' : 'btn-ghost'}`}
+                          onClick={() => setTrialDaysInput(d)}
+                          style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                        >
+                          {d}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--primary, #2563eb)', background: 'rgba(37, 99, 235, 0.08)', padding: '6px 10px', borderRadius: 6 }}>
+                    ✨ Trial will end on: <strong>{dayjs().add(trialDaysInput, 'day').format('DD MMM YYYY')}</strong> ({trialDaysInput} days remaining)
+                  </div>
+                </div>
+              )}
+
+              {/* Mode 2: ADD_DAYS */}
+              {trialAdjustmentMode === 'ADD_DAYS' && (
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    Days to Add to Current Expiry:
+                  </label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                    <input
+                      type="number"
+                      className="input"
+                      min={1}
+                      max={365}
+                      style={{ width: 110 }}
+                      value={trialDaysInput}
+                      onChange={(e) => setTrialDaysInput(Math.max(1, parseInt(e.target.value) || 1))}
+                    />
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {[7, 14, 30, 60].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          className={`btn btn-xs ${trialDaysInput === d ? 'btn-primary' : 'btn-ghost'}`}
+                          onClick={() => setTrialDaysInput(d)}
+                          style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                        >
+                          +{d}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {(() => {
+                    const base = extendTrialModalEnt.trialEndsAt && new Date(extendTrialModalEnt.trialEndsAt) > new Date()
+                      ? new Date(extendTrialModalEnt.trialEndsAt)
+                      : new Date()
+                    const newEnd = dayjs(base).add(trialDaysInput, 'day')
+                    return (
+                      <div style={{ fontSize: '0.8rem', color: 'var(--primary, #2563eb)', background: 'rgba(37, 99, 235, 0.08)', padding: '6px 10px', borderRadius: 6 }}>
+                        ✨ Extended expiry date: <strong>{newEnd.format('DD MMM YYYY')}</strong> ({newEnd.diff(dayjs(), 'day')} days remaining)
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+
+              {/* Mode 3: SET_DATE */}
+              {trialAdjustmentMode === 'SET_DATE' && (
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    Choose Specific Trial Expiration Date:
+                  </label>
+                  <input
+                    type="date"
+                    className="input"
+                    value={trialDateInput}
+                    min={dayjs().format('YYYY-MM-DD')}
+                    onChange={(e) => setTrialDateInput(e.target.value)}
+                    required
+                  />
+                  {trialDateInput && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--primary, #2563eb)', background: 'rgba(37, 99, 235, 0.08)', padding: '6px 10px', borderRadius: 6, marginTop: 8 }}>
+                      ✨ Selected Expiry: <strong>{dayjs(trialDateInput).format('DD MMM YYYY')}</strong> ({Math.max(0, dayjs(trialDateInput).diff(dayjs(), 'day'))} days remaining)
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Mode 4: EXPIRE_NOW */}
+              {trialAdjustmentMode === 'EXPIRE_NOW' && (
+                <div style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid var(--danger, #ef4444)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '12px 14px',
+                  fontSize: '0.85rem',
+                  color: 'var(--danger, #ef4444)',
+                }}>
+                  <strong>⚠️ Immediate Trial Termination</strong>
+                  <p style={{ margin: '6px 0 0', lineHeight: 1.4 }}>
+                    This client's free trial will immediately conclude. The enterprise status will change to <strong>EXPIRED</strong>, requiring software subscription activation to continue usage.
+                  </p>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
                 <button type="button" className="btn btn-ghost" onClick={() => setExtendTrialModalEnt(null)}>
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-warning" disabled={submittingTrial}>
-                  {submittingTrial ? 'Extending...' : 'Extend Trial Period'}
+                <button
+                  type="submit"
+                  className={trialAdjustmentMode === 'EXPIRE_NOW' ? 'btn btn-danger' : 'btn btn-primary'}
+                  disabled={submittingTrial}
+                >
+                  {submittingTrial
+                    ? 'Updating...'
+                    : trialAdjustmentMode === 'EXPIRE_NOW'
+                      ? '🛑 Confirm Immediate Expiry'
+                      : '✓ Apply Trial Duration'}
                 </button>
               </div>
             </form>
@@ -1487,6 +1698,39 @@ export default function PlatformEnterprisesPage() {
                     <option value="PRO">Pro Tier (5 Branches, 15 Staff)</option>
                     <option value="ENTERPRISE">Enterprise Tier (Unlimited Branches & Staff)</option>
                   </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                    Free Trial Duration (Days for Onboarded Client):
+                  </label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                    <input
+                      type="number"
+                      className="input"
+                      min={1}
+                      max={365}
+                      style={{ width: 100 }}
+                      value={inviteForm.trialDays || 14}
+                      onChange={(e) => setInviteForm({ ...inviteForm, trialDays: Math.max(1, parseInt(e.target.value) || 14) })}
+                    />
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {[7, 14, 30, 60, 90].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          className={`btn btn-xs ${inviteForm.trialDays === d ? 'btn-primary' : 'btn-ghost'}`}
+                          onClick={() => setInviteForm({ ...inviteForm, trialDays: d })}
+                          style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                        >
+                          {d}d
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Client will be granted a {inviteForm.trialDays || 14}-day free trial upon onboarding.
+                  </span>
                 </div>
 
                 <div>

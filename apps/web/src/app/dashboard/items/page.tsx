@@ -8,6 +8,8 @@ import { StockAdjustmentModal } from '@/components/shared/StockAdjustmentModal'
 import { OpeningStockAgreement } from '@/components/shared/OpeningStockAgreement'
 import { ExportMenu } from '@/components/shared/ExportMenu'
 import { PasswordConfirmModal } from '@/components/shared/PasswordConfirmModal'
+import { ImportItemsModal } from '@/components/items/ImportItemsModal'
+import { Upload } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 
 interface Item {
@@ -52,6 +54,7 @@ export default function ItemsPage() {
   const [itemToDel, setItemToDel] = useState<Item | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 150)
@@ -276,8 +279,17 @@ export default function ItemsPage() {
             headers={['SKU', 'Name', 'Category', 'Brand', 'Supplier', 'Stock Quantity', 'Retail Price', 'Wholesale Price', 'Status']}
             getData={getExportData}
           />
-           {['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user?.role || '') && (
+           {['SUPER_ADMIN', 'MANAGER_ADMIN', 'ADMIN', 'MANAGER', 'PLATFORM_OWNER'].includes(user?.role || '') && (
             <>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowImportModal(true)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Upload size={15} />
+                Import Stock
+              </button>
               {selectedIds.length > 0 && (
                 <button className="btn btn-secondary" onClick={handleBatchAIGenerate} disabled={isGeneratingBatch}>
                   {isGeneratingBatch ? '⌛ Generating...' : `🤖 AI Describe (${selectedIds.length})`}
@@ -464,6 +476,17 @@ export default function ItemsPage() {
           onCancel={() => { setDeleteId(null); setItemToDel(null); }}
         />
       )}
+
+      <ImportItemsModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        onSuccess={() => {
+          setShowImportModal(false)
+          fetchItems()
+        }}
+        channels={channels}
+        token={token!}
+      />
     </div>
   )
 }

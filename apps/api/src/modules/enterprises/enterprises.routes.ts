@@ -208,16 +208,32 @@ export const enterpriseRoutes: FastifyPluginAsync = async (app) => {
       return BillingService.startSoftware(id, body, request.user.sub)
     })
 
-    // Extend free trial (Platform Owner only)
+    // Extend or adjust free trial (Platform Owner only)
     authApp.post('/:id/extend-trial', {
       preHandler: [authorize('PLATFORM_OWNER')],
     }, async (request) => {
       const { id } = request.params as { id: string }
       const schema = z.object({
-        days: z.number().int().min(1).max(365),
+        mode:       z.enum(['SET_DAYS', 'ADD_DAYS', 'SET_DATE', 'EXPIRE_NOW']).default('ADD_DAYS'),
+        days:       z.number().int().min(0).max(365).optional(),
+        newEndDate: z.string().optional(),
       })
       const body = schema.parse(request.body)
-      return BillingService.extendTrial(id, body.days, request.user.sub)
+      return BillingService.adjustTrial(id, body, request.user.sub)
+    })
+
+    // Explicit adjust trial endpoint (Platform Owner only)
+    authApp.post('/:id/adjust-trial', {
+      preHandler: [authorize('PLATFORM_OWNER')],
+    }, async (request) => {
+      const { id } = request.params as { id: string }
+      const schema = z.object({
+        mode:       z.enum(['SET_DAYS', 'ADD_DAYS', 'SET_DATE', 'EXPIRE_NOW']).default('SET_DAYS'),
+        days:       z.number().int().min(0).max(365).optional(),
+        newEndDate: z.string().optional(),
+      })
+      const body = schema.parse(request.body)
+      return BillingService.adjustTrial(id, body, request.user.sub)
     })
   })
 }

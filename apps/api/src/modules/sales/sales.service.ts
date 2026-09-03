@@ -610,18 +610,39 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
       select: { passwordHash: true, role: true, channelId: true },
     })
 
-    const bypassPassword = ['SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actor.role)
-    if (!bypassPassword) {
+    const isHQRole = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(actor.role)
+    if (!isHQRole) {
       if (!actor.channelId) {
         throw { statusCode: 400, message: 'Your account has no channel assigned' }
       }
       if (sale.channelId !== actor.channelId) {
         throw { statusCode: 403, message: 'You can only reverse sales for your assigned channel' }
       }
-    }
-    if (!bypassPassword) {
-      const isValid = managerPassword ? await verifyPassword(actor.passwordHash, managerPassword) : false
-      if (!isValid) throw { statusCode: 403, message: 'Invalid manager password' }
+
+      let isValid = false
+      if (managerPassword) {
+        isValid = await verifyPassword(actor.passwordHash, managerPassword)
+        if (!isValid) {
+          // Allow any active manager or admin for this channel/enterprise to authorize
+          const managers = await tx.user.findMany({
+            where: {
+              role: { in: ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER'] },
+              OR: [
+                { channelId: sale.channelId },
+                { channelId: null },
+              ],
+            },
+            select: { passwordHash: true }
+          })
+          for (const m of managers) {
+            if (await verifyPassword(m.passwordHash, managerPassword)) {
+              isValid = true
+              break
+            }
+          }
+        }
+      }
+      if (!isValid) throw { statusCode: 403, message: 'Invalid manager or admin authorization password' }
     }
 
     for (const item of sale.items) {
@@ -632,11 +653,18 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
           unitCostAtTime: item.costPriceSnapshot, performedBy: actorId,
         },
       })
-      await tx.inventoryBalance.update({
-        where: { itemId_channelId: { itemId: item.itemId, channelId: sale.channelId } },
-        data: { availableQty: { increment: item.quantity } }
+      await tx.inventoryBalance.upsert({
+        where:  { itemId_channelId: { itemId: item.itemId, channelId: sale.channelId } },
+        update: { availableQty: { increment: item.quantity } },
+        create: { itemId: item.itemId, channelId: sale.channelId, availableQty: item.quantity }
       })
     }
+
+    // Restore any serial numbers back to available in stock
+    await tx.serial.updateMany({
+      where: { saleId: sale.id },
+      data:  { status: 'IN_STOCK', saleId: null }
+    })
 
     if (sale.saleType === 'CREDIT' && sale.customerId) {
       await tx.customer.update({ where: { id: sale.customerId }, data: { outstandingCredit: { decrement: sale.netAmount } } })
@@ -667,6 +695,12 @@ export async function reverseSale(saleId: string, actorId: string, managerPasswo
     await tx.commissionEntry.updateMany({
       where: { saleId: sale.id, status: { in: ['PENDING', 'APPROVED'] } },
       data:  { status: 'VOIDED' },
+    })
+
+    // Mark original sale journal entries as reversed
+    await tx.journalEntry.updateMany({
+      where: { referenceId: sale.id, referenceType: 'SALE' },
+      data:  { reversedAt: new Date() }
     })
 
     await tx.sale.update({ where: { id: saleId }, data: { deletedAt: new Date() } })

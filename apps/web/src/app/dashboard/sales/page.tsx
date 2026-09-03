@@ -45,8 +45,9 @@ export default function SalesPage() {
   const [adminPass, setAdminPass] = useState('')
   const [reversing, setReversing] = useState(false)
 
-  const isHigherRole = ['SUPER_ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(user?.role || '')
-  const canFilterChannels = ['SUPER_ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
+  const isHigherRole = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER'].includes(user?.role || '')
+  const canFilterChannels = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
+  const isAdminOrOwner = ['PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'].includes(user?.role || '')
 
   const buildQuery = (p: number, limit: string = '25') => {
     const params = new URLSearchParams({ limit, page: String(p) })
@@ -143,10 +144,14 @@ export default function SalesPage() {
 
   const handleReversal = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!reversalModal || !adminPass) return
+    if (!reversalModal) return
+    if (!isAdminOrOwner && !adminPass) {
+      toast.error('Manager or Admin password is required to authorize reversal')
+      return
+    }
     setReversing(true)
     try {
-      await api.post(`/sales/${reversalModal.id}/reverse`, { password: adminPass }, token!)
+      await api.post(`/sales/${reversalModal.id}/reverse`, { password: adminPass || undefined }, token!)
       toast.success('Sale reversed successfully!')
       setReversalModal(null)
       setAdminPass('')
@@ -341,13 +346,21 @@ export default function SalesPage() {
         <div className="modal-overlay">
           <div className="modal-content card" style={{ maxWidth: 420 }}>
             <h3 style={{ color: 'var(--danger)' }}>↩ Reverse Sale</h3>
-            <p style={{ color: 'var(--text-muted)', margin: '12px 0' }}>You are reversing sale <strong>{reversalModal.receiptNo}</strong> ({fmt(reversalModal.totalAmount)}). This requires admin authorization.</p>
+            <p style={{ color: 'var(--text-muted)', margin: '12px 0' }}>You are reversing sale <strong>{reversalModal.receiptNo}</strong> ({fmt(reversalModal.totalAmount)}). {isAdminOrOwner ? 'Proceeding with admin credentials.' : 'This requires manager or admin authorization.'}</p>
             <form onSubmit={handleReversal} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div className="form-group">
-                <label>Admin Password *</label>
-                <input type="password" className="input" value={adminPass} onChange={e => setAdminPass(e.target.value)} required placeholder="Enter admin password to confirm" autoFocus />
+                <label>{isAdminOrOwner ? 'Confirm Password (Optional for Admins)' : 'Manager / Admin Password *'}</label>
+                <input
+                  type="password"
+                  className="input"
+                  value={adminPass}
+                  onChange={e => setAdminPass(e.target.value)}
+                  required={!isAdminOrOwner}
+                  placeholder={isAdminOrOwner ? 'Enter password (optional)' : 'Enter manager password to confirm'}
+                  autoFocus
+                />
               </div>
-              <p style={{ fontSize: '0.82rem', color: 'var(--warning)' }}>⚠️ This action creates a credit note and reverses inventory. It cannot be undone.</p>
+              <p style={{ fontSize: '0.82rem', color: 'var(--warning)' }}>⚠️ This action creates a credit note, restores serial numbers, and reverses inventory. It cannot be undone.</p>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn-ghost" onClick={() => { setReversalModal(null); setAdminPass('') }}>Cancel</button>
                 <button type="submit" className="btn btn-danger" disabled={reversing}>{reversing ? 'Processing...' : '↩ Confirm Reversal'}</button>

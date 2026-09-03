@@ -46,10 +46,14 @@ export class EnterpriseService {
     const expiresAt = new Date()
     expiresAt.setDate(expiresAt.getDate() + (input.expiresInDays || 7))
 
+    const rawBusinessName = input.businessName?.trim() || ''
+    const trialDays = input.trialDays || 14
+    const businessNameWithMeta = rawBusinessName ? `${rawBusinessName} [trial:${trialDays}]` : `[trial:${trialDays}]`
+
     const invite = await prisma.enterpriseInvite.create({
       data: {
         code,
-        businessName: input.businessName?.trim() || null,
+        businessName: businessNameWithMeta.trim() || null,
         plan:         input.plan || 'STARTER',
         createdBy:    creatorId,
         expiresAt,
@@ -142,8 +146,11 @@ export class EnterpriseService {
 
     // 3. Atomic Provisioning & Invite Redemption
     const result = await prisma.$transaction(async (tx) => {
+      const trialDaysMatch = invite.businessName?.match(/\[trial:(\d+)\]/)
+      const trialDays = (trialDaysMatch && trialDaysMatch[1]) ? parseInt(trialDaysMatch[1], 10) : 14
+
       const trialEndsAt = new Date()
-      trialEndsAt.setDate(trialEndsAt.getDate() + 14)
+      trialEndsAt.setDate(trialEndsAt.getDate() + trialDays)
 
       const enterprise = await tx.enterprise.create({
         data: {
@@ -304,9 +311,25 @@ export class EnterpriseService {
    * Update enterprise metadata/settings.
    */
   static async update(id: string, input: UpdateEnterpriseInput) {
+    const data: any = { ...input }
+    delete data.trialDays
+
+    if (input.trialDays !== undefined) {
+      if (input.trialDays <= 0) {
+        data.trialEndsAt = new Date()
+        data.billingStatus = 'EXPIRED'
+      } else {
+        data.trialEndsAt = new Date(Date.now() + input.trialDays * 24 * 60 * 60 * 1000)
+        data.billingStatus = 'TRIAL'
+        data.isActive = true
+      }
+    } else if (input.trialEndsAt !== undefined) {
+      data.trialEndsAt = input.trialEndsAt ? new Date(input.trialEndsAt) : null
+    }
+
     return prisma.enterprise.update({
       where: { id },
-      data:  input,
+      data,
     })
   }
 

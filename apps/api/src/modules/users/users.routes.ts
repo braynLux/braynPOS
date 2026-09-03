@@ -298,16 +298,30 @@ export const usersRoutes: FastifyPluginAsync = async (app) => {
     const { password } = z.object({ password: z.string().min(6) }).parse(request.body)
     await usersService.findById(id, request.user)
 
-    // Hierarchy check: actor must strictly outrank target
     const targetUser = await prisma.user.findUnique({ where: { id }, select: { role: true, username: true } })
     if (!targetUser) return reply.status(404).send({ error: 'User not found' })
 
-    const { roleHierarchy } = await import('../../middleware/authorize.js')
-    const actorRank  = roleHierarchy[request.user.role]  ?? 0
-    const targetRank = roleHierarchy[targetUser.role as any] ?? 0
+    // Hierarchy check:
+    // PLATFORM_OWNER & SUPER_ADMIN can reset anyone.
+    // ADMIN & MANAGER_ADMIN can reset anyone in their enterprise except SUPER_ADMIN and PLATFORM_OWNER.
+    // Self-reset is always permitted for administrators.
+    // MANAGER can reset cashiers, storekeepers, promoters, and sales persons.
+    const isHQSuperAdmin = ['PLATFORM_OWNER', 'SUPER_ADMIN'].includes(request.user.role)
+    const isTargetSuper = ['PLATFORM_OWNER', 'SUPER_ADMIN'].includes(targetUser.role)
+    const isSelf = request.user.sub === id
 
-    if (actorRank <= targetRank) {
-      return reply.status(403).send({ error: 'You can only reset passwords for users with a lower rank than your own' })
+    if (!isHQSuperAdmin && !isSelf) {
+      if (isTargetSuper) {
+        return reply.status(403).send({ error: 'You cannot reset the password of a Platform Owner or Super Admin' })
+      }
+      if (request.user.role === 'MANAGER') {
+        const { roleHierarchy } = await import('../../middleware/authorize.js')
+        const actorRank  = roleHierarchy[request.user.role]  ?? 0
+        const targetRank = roleHierarchy[targetUser.role as any] ?? 0
+        if (actorRank <= targetRank) {
+          return reply.status(403).send({ error: 'Managers can only reset passwords for junior staff members' })
+        }
+      }
     }
 
     await usersService.resetPassword(id, password)

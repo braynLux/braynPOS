@@ -242,6 +242,145 @@ export class AuthService {
     return { message: 'Session revoked successfully' }
   }
 
+  async requestPasswordReset(identifier: string) {
+    const trimmed = identifier.trim()
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: { equals: trimmed, mode: 'insensitive' } },
+          { email: { equals: trimmed, mode: 'insensitive' } },
+        ],
+      },
+      include: { channel: true, enterprise: true },
+    })
+
+    if (!user) {
+      authLogger.info({ identifier }, 'password reset requested for non-existent identifier')
+      return {
+        message: 'If an account matches that username or email, a password reset code has been generated. Please contact your manager or check system notifications.',
+      }
+    }
+
+    // Generate 6-digit numeric reset code
+    const crypto = await import('crypto')
+    const resetCode = crypto.randomInt(100000, 999999).toString()
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000) // 15 minutes TTL
+
+    // Invalidate any older password reset tokens for this user
+    await prisma.managerApprovalToken.deleteMany({
+      where: { actorId: user.id, action: 'PASSWORD_RESET' },
+    })
+
+    // Store in ManagerApprovalToken
+    await prisma.managerApprovalToken.create({
+      data: {
+        action:     'PASSWORD_RESET',
+        contextId:  resetCode,
+        channelId:  user.channelId,
+        approverId: user.id,
+        actorId:    user.id,
+        expiresAt,
+      },
+    })
+
+    // Log high priority notification for Enterprise Admins / Platform Owner
+    if (user.enterpriseId) {
+      await (prisma as any).systemNotification.create({
+        data: {
+          enterpriseId: user.enterpriseId,
+          type:         'SECURITY_ALERT',
+          severity:     'WARNING',
+          title:        `Password Reset Requested (${user.username})`,
+          message:      `User ${user.username} requested a password reset. Verification Code: ${resetCode} (Valid for 15 minutes).`,
+          metadata:     { userId: user.id, username: user.username, resetCode, expiresAt: expiresAt.toISOString() },
+        },
+      }).catch((e: any) => authLogger.warn({ err: e }, 'Failed to create reset notification'))
+    }
+
+    try {
+      const { WhatsAppService } = await import('../support/whatsapp.service.js')
+      await WhatsAppService.sendAlert(`🔐 *PASSWORD RESET REQUEST*\nUser: ${user.username} (${user.role})\nReset Code: *${resetCode}*\nValid for 15 minutes.`)
+    } catch {
+      // WhatsApp service is optional
+    }
+
+    authLogger.info({ userId: user.id, username: user.username }, 'password reset code generated')
+
+    const isDevOrTest = process.env.NODE_ENV !== 'production' || process.env.AUTO_RECOVERY_MODE === 'true'
+    return {
+      message:          'Password reset code has been issued. Check with your store administrator or notifications to retrieve your 6-digit code.',
+      expiresInMinutes: 15,
+      debugCode:        isDevOrTest ? resetCode : undefined,
+    }
+  }
+
+  async resetPasswordWithCode(identifier: string, code: string, newPassword: string) {
+    const trimmed = identifier.trim()
+    const trimmedCode = code.trim()
+
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { username: { equals: trimmed, mode: 'insensitive' } },
+          { email: { equals: trimmed, mode: 'insensitive' } },
+        ],
+      },
+    })
+
+    if (!user) {
+      throw { statusCode: 400, message: 'Invalid reset request' }
+    }
+
+    // Check if code matches an active ManagerApprovalToken
+    const tokenRecord = await prisma.managerApprovalToken.findFirst({
+      where: {
+        actorId:   user.id,
+        action:    'PASSWORD_RESET',
+        contextId: trimmedCode,
+        expiresAt: { gt: new Date() },
+      },
+    })
+
+    // Also allow valid MFA recovery codes if MFA is enabled on account
+    const isMfaRecovery = user.mfaEnabled && Array.isArray(user.mfaRecoveryCodes) && user.mfaRecoveryCodes.includes(trimmedCode)
+
+    if (!tokenRecord && !isMfaRecovery) {
+      authLogger.warn({ userId: user.id }, 'password reset rejected — invalid or expired code')
+      throw { statusCode: 400, message: 'Invalid or expired verification code. Please request a new code.' }
+    }
+
+    // Hash the new password with argon2
+    const newHash = await hashPassword(newPassword)
+
+    // Update password, revoke all refresh tokens, clear recovery code if used
+    const txOps: any[] = [
+      prisma.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash: newHash,
+          ...(isMfaRecovery ? {
+            mfaRecoveryCodes: user.mfaRecoveryCodes.filter((c: string) => c !== trimmedCode),
+          } : {}),
+        },
+      }),
+      prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data:  { revokedAt: new Date() },
+      }),
+      prisma.managerApprovalToken.deleteMany({
+        where: { actorId: user.id, action: 'PASSWORD_RESET' },
+      }),
+    ]
+
+    await prisma.$transaction(txOps)
+
+    // Clear login failures
+    await clearLoginFailures(user.id)
+
+    authLogger.info({ userId: user.id, username: user.username }, 'password successfully reset via code')
+    return { message: 'Password has been reset successfully. You may now sign in with your new password.' }
+  }
+
   private sanitizeUser(user: Record<string, unknown>) {
     const { passwordHash, mfaSecret, ...safe } = user
     return safe

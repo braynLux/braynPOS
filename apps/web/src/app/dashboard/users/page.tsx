@@ -43,6 +43,8 @@ export default function UsersPage() {
   const [activeTab, setActiveTab] = useState<'users' | 'approvals'>('users')
   const [userToReset, setUserToReset] = useState<User | null>(null)
   const [resetTempPassword, setResetTempPassword] = useState('')
+  const [customResetPassword, setCustomResetPassword] = useState('')
+  const [resetPasswordMode, setResetPasswordMode] = useState<'GENERATE' | 'CUSTOM'>('GENERATE')
   const [resetting, setResetting] = useState(false)
 
   const isPlatformOwner = currentUser?.role === 'PLATFORM_OWNER'
@@ -53,15 +55,20 @@ export default function UsersPage() {
   const canSeeApprovals = isSuperAdmin || isManagerAdmin || isManager
   const availableRoles = isManager ? JUNIOR_ROLES : ALL_ROLES
 
-  // Role hierarchy for reset permission: actor rank must be HIGHER than target
-  const ROLE_RANK: Record<string, number> = {
-    PLATFORM_OWNER: 110, SUPER_ADMIN: 100, ADMIN: 80, MANAGER_ADMIN: 70, MANAGER: 60,
-    CASHIER: 30, STOREKEEPER: 30, PROMOTER: 30, SALES_PERSON: 30
-  }
-  const canResetPassword = (targetRole: string) => {
-    const actorRank = ROLE_RANK[currentUser?.role || ''] ?? 0
-    const targetRank = ROLE_RANK[targetRole] ?? 0
-    return actorRank > targetRank
+  // Password reset permission:
+  // - Platform Owner & Super Admin can reset anyone
+  // - Enterprise Admins (MANAGER_ADMIN, ADMIN) can reset any account in the enterprise (except Platform Owner / Super Admin) or themselves
+  // - Managers can reset junior store staff
+  const canResetPassword = (targetRole: string, targetId?: string) => {
+    if (isPlatformOwner || isSuperAdmin) return true
+    if (targetId && targetId === currentUser?.id) return true
+    if (isManagerAdmin || currentUser?.role === 'ADMIN') {
+      return !['PLATFORM_OWNER', 'SUPER_ADMIN'].includes(targetRole)
+    }
+    if (isManager) {
+      return ['CASHIER', 'STOREKEEPER', 'PROMOTER', 'SALES_PERSON'].includes(targetRole)
+    }
+    return false
   }
 
   const fetchAll = async () => {
@@ -205,14 +212,22 @@ export default function UsersPage() {
     if (!userToReset) return
     setResetting(true)
     try {
-      // Generate a random temp password
-      const tempPw = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4).toUpperCase() + '!'
-      await api.post(`/users/${userToReset.id}/reset-password`, { password: tempPw }, token!)
-      setResetTempPassword(tempPw)
-      toast.success(`Password reset for ${userToReset.username}`)
+      let passwordToSet = customResetPassword
+      if (resetPasswordMode === 'GENERATE') {
+        // Generate a random temp password
+        passwordToSet = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4).toUpperCase() + '!'
+      }
+      await api.post(`/users/${userToReset.id}/reset-password`, { password: passwordToSet }, token!)
+      if (resetPasswordMode === 'GENERATE') {
+        setResetTempPassword(passwordToSet)
+        toast.success(`Temporary password generated for ${userToReset.username}`)
+      } else {
+        toast.success(`Password successfully updated for ${userToReset.username}`)
+        setUserToReset(null)
+        setCustomResetPassword('')
+      }
     } catch (err: any) {
       toast.error('Reset failed: ' + (err.message || 'Unknown error'), { icon: '🛡️' })
-      setUserToReset(null)
     } finally {
       setResetting(false)
     }
@@ -264,8 +279,20 @@ export default function UsersPage() {
                       <td><span className={`badge ${statusBadge[u.status] || 'badge-info'}`}>{u.status}</span></td>
                       <td style={{ textAlign: 'right', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <button className="btn btn-ghost btn-sm" onClick={() => openEditModal(u)} title="Edit User">🔧</button>
-                        {canResetPassword(u.role) && (
-                          <button className="btn btn-ghost btn-sm" onClick={() => { setUserToReset(u); setResetTempPassword('') }} title="Reset Password">🔑</button>
+                        {canResetPassword(u.role, u.id) && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => {
+                              setUserToReset(u)
+                              setResetTempPassword('')
+                              setResetPasswordMode('GENERATE')
+                              setCustomResetPassword('')
+                            }}
+                            title="Reset User Password"
+                            style={{ color: 'var(--warning, #f59e0b)' }}
+                          >
+                            🔑
+                          </button>
                         )}
                         <button className="btn btn-ghost btn-sm" onClick={() => handleToggle(u)} title={u.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}>{u.status === 'ACTIVE' ? '🔴' : '🟢'}</button>
                         <button className="btn btn-ghost btn-sm text-danger" onClick={() => setUserToDelete(u)} title="Delete User">🗑️</button>
@@ -328,6 +355,38 @@ export default function UsersPage() {
                 </div>
               </div>
 
+              {editingUser && canResetPassword(editingUser.role, editingUser.id) && (
+                <div style={{
+                  padding: '12px 14px',
+                  background: 'var(--bg-elevated, #f8fafc)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginTop: 4,
+                }}>
+                  <div>
+                    <strong style={{ fontSize: '0.85rem', display: 'block' }}>Account Credentials</strong>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Reset password for {editingUser.username}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-warning btn-sm"
+                    onClick={() => {
+                      const u = editingUser
+                      setShowModal(false)
+                      setUserToReset(u)
+                      setResetTempPassword('')
+                      setResetPasswordMode('GENERATE')
+                      setCustomResetPassword('')
+                    }}
+                  >
+                    🔑 Reset Password
+                  </button>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
                 <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving...' : (editingUser ? 'Save Changes' : 'Create User')}</button>
@@ -349,18 +408,71 @@ export default function UsersPage() {
       {/* Password Reset Modal */}
       {userToReset && !resetTempPassword && (
         <div className="modal-overlay" onClick={() => setUserToReset(null)}>
-          <div className="modal-content card" style={{ maxWidth: 400 }} onClick={e => e.stopPropagation()}>
-            <h3>🔑 Reset Password</h3>
-            <p style={{ color: 'var(--text-muted)', marginTop: 12, fontSize: '0.9rem' }}>
-              You are about to generate a new temporary password for <strong>{userToReset.username}</strong> ({userToReset.role}).
-            </p>
-            <div style={{ marginTop: 8, padding: '10px 14px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, fontSize: '0.85rem', color: 'var(--warning)' }}>
-              ⚠️ The user will need to use this temporary password to log in and should change it immediately.
+          <div className="modal-content card" style={{ maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>🔑 Reset Password</h3>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => setUserToReset(null)}
+                style={{ padding: '2px 8px' }}
+              >
+                ✕
+              </button>
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
+            <p style={{ color: 'var(--text-muted)', margin: '0 0 14px', fontSize: '0.85rem' }}>
+              Resetting password for <strong>{userToReset.username}</strong> ({userToReset.role}).
+            </p>
+
+            {/* Mode Selector */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${resetPasswordMode === 'GENERATE' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setResetPasswordMode('GENERATE')}
+                style={{ flex: 1, justifyContent: 'center', fontSize: '0.8rem' }}
+              >
+                ⚡ Auto-Generate
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${resetPasswordMode === 'CUSTOM' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setResetPasswordMode('CUSTOM')}
+                style={{ flex: 1, justifyContent: 'center', fontSize: '0.8rem' }}
+              >
+                ✏️ Set Specific Password
+              </button>
+            </div>
+
+            {resetPasswordMode === 'GENERATE' ? (
+              <div style={{ padding: '12px 14px', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8, fontSize: '0.85rem', color: 'var(--warning)' }}>
+                ⚠️ A cryptographically random temporary password will be generated for {userToReset.username}. You will be able to copy and share it immediately.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="form-group">
+                  <label style={{ fontSize: '0.8rem', fontWeight: 600 }}>New Password *</label>
+                  <input
+                    type="password"
+                    className="input"
+                    value={customResetPassword}
+                    onChange={e => setCustomResetPassword(e.target.value)}
+                    placeholder="Enter new password (min 6 chars)"
+                    minLength={6}
+                    autoFocus
+                  />
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 18 }}>
               <button className="btn btn-ghost" onClick={() => setUserToReset(null)}>Cancel</button>
-              <button className="btn btn-primary" disabled={resetting} onClick={handleResetPassword}>
-                {resetting ? 'Resetting...' : 'Generate & Reset'}
+              <button
+                className="btn btn-primary"
+                disabled={resetting || (resetPasswordMode === 'CUSTOM' && customResetPassword.length < 6)}
+                onClick={handleResetPassword}
+              >
+                {resetting ? 'Resetting...' : (resetPasswordMode === 'GENERATE' ? '⚡ Generate & Reset' : '✓ Set New Password')}
               </button>
             </div>
           </div>

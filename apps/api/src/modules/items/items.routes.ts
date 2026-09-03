@@ -560,24 +560,66 @@ export const itemsRoutes: FastifyPluginAsync = async (app) => {
   app.post('/import', {
     config:     RATE.APPROVAL,
     preHandler: [
-      authorize('SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN'),
+      authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER'),
       requirePlanFeature('catalog'),
     ],
   }, async (request) => {
     const data = await request.file()
-    if (!data || !data.file) throw { statusCode: 400, message: 'CSV file required' }
+    if (!data || !data.file) throw { statusCode: 400, message: 'CSV/Excel file required' }
     const buffer = await data.toBuffer()
 
-    // FIX: channelId was never collected at all — imported items had no
-    // InventoryBalance anywhere (see csv-import.service.ts). Accept it as a
-    // form field alongside the file, falling back to the uploader's own
-    // channel if they're not HQ-wide.
     const channelIdField = (data.fields?.channelId as any)?.value as string | undefined
     const channelId = channelIdField || request.user.channelId || undefined
     if (!channelId) {
       throw { statusCode: 400, message: 'channelId is required — specify which channel these items belong to' }
     }
 
-    return csvImportService.importItems(buffer, channelId)
+    return csvImportService.importItems(buffer, channelId, request.user.enterpriseId, request.user.sub)
+  })
+
+  // POST /items/bulk-import (Dynamic JSON import from UI onboarding wizard)
+  app.post('/bulk-import', {
+    config:     RATE.APPROVAL,
+    preHandler: [
+      authorize('PLATFORM_OWNER', 'SUPER_ADMIN', 'ADMIN', 'MANAGER_ADMIN', 'MANAGER'),
+      requirePlanFeature('catalog'),
+    ],
+  }, async (request) => {
+    const { channelId, duplicateMode, items } = z.object({
+      channelId: z.string().min(1),
+      duplicateMode: z.enum(['UPDATE', 'SKIP']).optional().default('UPDATE'),
+      items: z.array(z.object({
+        name: z.string().min(1),
+        buyingPrice: z.union([z.number(), z.string()]).optional(),
+        costPrice: z.union([z.number(), z.string()]).optional(),
+        weightedAvgCost: z.union([z.number(), z.string()]).optional(),
+        sellingPrice: z.union([z.number(), z.string()]).optional(),
+        retailPrice: z.union([z.number(), z.string()]).optional(),
+        wholesalePrice: z.union([z.number(), z.string()]).optional(),
+        minRetailPrice: z.union([z.number(), z.string()]).optional(),
+        openingStock: z.union([z.number(), z.string()]).optional(),
+        quantity: z.union([z.number(), z.string()]).optional(),
+        availableQty: z.union([z.number(), z.string()]).optional(),
+        sku: z.string().optional(),
+        barcode: z.union([z.string(), z.number()]).optional().transform(v => v !== undefined && v !== null ? String(v) : undefined),
+        category: z.string().optional(),
+        categoryName: z.string().optional(),
+        brand: z.string().optional(),
+        brandName: z.string().optional(),
+        supplier: z.string().optional(),
+        supplierName: z.string().optional(),
+        reorderLevel: z.union([z.number(), z.string()]).optional(),
+        unitOfMeasure: z.string().optional(),
+        description: z.string().optional(),
+        taxClass: z.enum(['STANDARD', 'ZERO_RATED', 'EXEMPT']).optional(),
+      })).min(1, 'At least one item row is required'),
+    }).parse(request.body)
+
+    return csvImportService.importDynamicItems(items, {
+      channelId,
+      enterpriseId: request.user.enterpriseId,
+      actorId: request.user.sub,
+      duplicateMode,
+    })
   })
 }
